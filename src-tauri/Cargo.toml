@@ -1,0 +1,65 @@
+[package]
+name = "hearken-studio"
+version = "0.1.0"
+description = "Offline, real-time scripture detection and projection"
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+name = "hearken_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+
+# Audio
+cpal = "0.15"
+ringbuf = "0.4"
+rubato = "0.15"
+webrtc-vad = "0.4"
+hound = "3.5"
+
+# Scripture engine (bundled SQLite is compiled with FTS5 enabled)
+rusqlite = { version = "0.32", features = ["bundled"] }
+regex = "1"
+rust-stemmers = "1.2"   # quote matcher: "loved"/"loves" → "love"
+
+# Service history (recaps, archive, insights, CCLI report)
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+# Local network sharing: phone view, OBS overlay, phone remote
+tiny_http = "0.12"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+# Hardware detection
+sysinfo = "0.33"
+
+# whisper.cpp: GPU backend is chosen per target at compile time; the CPU path is
+# always compiled in and used as the runtime fallback.
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.14", features = ["metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+whisper-rs = { version = "0.14", features = ["vulkan"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
+
+# Keep DSP / whisper.cpp / SQLite fast even in `tauri dev`.
+[profile.dev.package."*"]
+opt-level = 3

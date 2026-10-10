@@ -1,0 +1,100 @@
+/* Plain CSS (no Tailwind) so the projector bundle stays tiny. Only opacity animates:
+   it is composited on the GPU and never triggers layout or repaint of the text. */
+.sb-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.sb-fill {
+  position: absolute;
+  inset: 0;
+}
+.sb-enter {
+  animation: sb-fade-in var(--sb-fade, 350ms) ease-out both;
+}
+.sb-exit {
+  animation: sb-fade-out var(--sb-fade, 350ms) ease-in both;
+}
+.sb-blackout {
+  background: #000;
+  pointer-events: none;
+  transition: opacity var(--sb-fade, 350ms) ease;
+}
+.sb-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+.sb-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  text-wrap: pretty;
+}
+.sb-vnum {
+  font-size: 0.5em;
+  opacity: 0.65;
+  margin-right: 0.25em;
+  vertical-align: super;
+  line-height: 0;
+}
+@keyframes sb-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes sb-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-enter, .sb-exit { animation-duration: 1ms; }
+}
+.sb-columns {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 64px;
+}
+.sb-columns .sb-text + .sb-text {
+  border-left: 2px solid rgba(255, 255, 255, 0.18);
+  padding-left: 64px;
+}
+.sb-line {
+  display: block;
+}
+.sb-read {
+  transition: color 250ms ease;
+}
+.sb-qr {
+  position: absolute;
+  right: 48px;
+  bottom: 48px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 20px 28px 20px 20px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font: 600 30px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.sb-qr svg {
+  display: block;
+  width: 220px;
+  height: 220px;
+  border-radius: 10px;
+}
+.sb-qr small {
+  display: block;
+  font-weight: 400;
+  font-size: 24px;
+  opacity: 0.75;
+  margin-top: 6px;
+}

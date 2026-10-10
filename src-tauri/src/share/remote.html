@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#09090b">
+<title>Remote</title>
+<style>
+  :root { --bg: #09090b; --panel: #18181b; --line: #27272a; --ink: #fafafa; --muted: #a1a1aa; --live: #dc2626; --accent: #f59e0b; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #fafafa; --panel: #fff; --line: #e4e4e7; --ink: #18181b; --muted: #71717a; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body { font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 16px; padding-top: max(16px, env(safe-area-inset-top)); }
+  h1 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 8px; }
+  .live { background: var(--panel); border: 2px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; min-height: 56px; }
+  .live.on { border-color: var(--live); }
+  .live b { font-size: 18px; }
+  .live .tag { font-size: 12px; color: var(--muted); }
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px; }
+  button { font: inherit; font-weight: 600; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+           border-radius: 10px; padding: 14px; touch-action: manipulation; }
+  button:active { transform: scale(.98); }
+  .wide { grid-column: span 2; }
+  .black.on { background: var(--ink); color: var(--bg); }
+  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+  li { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; }
+  li div { flex: 1; min-width: 0; }
+  li .t { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  li .k { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
+  li button { padding: 10px 14px; background: var(--live); color: #fff; border: 0; }
+  .pin { max-width: 320px; margin: 20vh auto 0; text-align: center; }
+  .pin input { font: 600 32px/1 ui-monospace, monospace; letter-spacing: .4em; text-align: center; width: 100%; padding: 12px;
+               border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); margin: 12px 0; }
+  .err { color: var(--live); font-size: 13px; min-height: 18px; }
+  .empty { color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+(() => {
+  const app = document.getElementById("app");
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+  let pin = store.get("sb.pin") || "";
+  let timer = null;
+  let last = "";
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  function askPin(message) {
+    clearInterval(timer);
+    last = "";
+    app.innerHTML = `<div class="pin"><h1>Hearken remote</h1><p>Enter the PIN shown in the dashboard's Share panel.</p>
+      <input id="pin" inputmode="numeric" maxlength="4" autocomplete="off" value="">
+      <p class="err">${message || ""}</p><button class="wide" id="go" style="width:100%">Connect</button></div>`;
+    const input = document.getElementById("pin");
+    const go = () => { pin = input.value.trim(); store.set("sb.pin", pin); start(); };
+    document.getElementById("go").onclick = go;
+    input.onkeydown = e => { if (e.key === "Enter") go(); };
+    input.focus();
+  }
+
+  async function call(action, extra = "") {
+    const r = await fetch(`/api/remote/${action}?pin=${encodeURIComponent(pin)}${extra}`, { method: action === "state" ? "GET" : "POST" });
+    if (r.status === 403) { askPin("That PIN didn't work."); throw new Error("pin"); }
+    return r.json();
+  }
+
+  function render(s) {
+    app.innerHTML = `
+      <h1>Live</h1>
+      <div class="live ${s.live && !s.blackout ? "on" : ""}">${s.live ? `<b>${esc(s.live)}</b>` : '<span class="tag">Nothing on screen</span>'}
+        ${s.blackout ? '<div class="tag">Blacked out</div>' : ""}</div>
+      <div class="controls">
+        <button data-a="prev">◀ Previous</button><button data-a="next">Next ▶</button>
+        <button data-a="blackout" class="black ${s.blackout ? "on" : ""}">${s.blackout ? "Unblack" : "Blackout"}</button>
+        <button data-a="clear">Clear</button>
+      </div>
+      <h1>Detected & planned</h1>
+      ${s.items.length ? "<ul>" + s.items.map(i => `<li><div><div class="k">${esc(i.kind)}</div><b>${esc(i.label)}</b>
+        <div class="t">${esc(i.text)}</div></div><button data-id="${esc(i.id)}">Show</button></li>`).join("") + "</ul>"
+        : '<p class="empty">References appear here as they are spoken.</p>'}`;
+  }
+
+  app.addEventListener("click", async e => {
+    const b = e.target.closest("button");
+    if (!b || b.id === "go") return;
+    try {
+      if (b.dataset.a) await call(b.dataset.a);
+      if (b.dataset.id) await call("present", "&id=" + encodeURIComponent(b.dataset.id));
+      refresh();
+    } catch {}
+  });
+
+  async function refresh() {
+    try {
+      const s = await call("state");
+      const key = JSON.stringify(s);
+      if (key !== last) { last = key; render(s); } // don't rebuild buttons under a finger
+    } catch {}
+  }
+  function start() {
+    clearInterval(timer);
+    refresh();
+    timer = setInterval(refresh, 1500);
+  }
+  pin ? start() : askPin();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hearken overlay</title>
+<!--
+  OBS / vMix browser source, 1920×1080. Transparent except for the lower third.
+  Options: ?pos=top|bottom  &opacity=0.8  &scale=1.2  &accent=fbbf24
+-->
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  body { width: 100vw; height: 100vh; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .bar { position: absolute; left: 4vw; right: 4vw; bottom: 5vh; padding: 1.6vh 2vw 1.9vh;
+         background: rgba(10, 10, 12, var(--opacity, .78)); border-left: .5vh solid var(--accent, #fbbf24);
+         border-radius: .8vh; color: #fafafa; opacity: 0; transform: translateY(1.5vh);
+         transition: opacity .35s ease, transform .35s ease; font-size: calc(var(--scale, 1) * 1vh); }
+  .top .bar { top: 5vh; bottom: auto; transform: translateY(-1.5vh); }
+  .bar.on { opacity: 1; transform: none; }
+  .label { color: var(--accent, #fbbf24); font-weight: 700; font-size: 2.6em; letter-spacing: .04em; text-transform: uppercase; }
+  .label small { color: #d4d4d8; font-weight: 500; margin-left: .6em; }
+  .text { font-family: Georgia, "Iowan Old Style", serif; font-size: var(--text, 3.6em); line-height: 1.3; margin-top: .3em;
+          text-shadow: 0 1px 4px rgba(0,0,0,.6); }
+  .song .text { white-space: pre-line; }
+</style>
+</head>
+<body>
+<div class="bar" id="bar"><div class="label" id="label"></div><div class="text" id="text"></div></div>
+<script>
+(() => {
+  const p = new URLSearchParams(location.search);
+  const root = document.documentElement;
+  if (p.get("pos") === "top") document.body.classList.add("top");
+  if (p.get("opacity")) root.style.setProperty("--opacity", p.get("opacity"));
+  if (p.get("scale")) root.style.setProperty("--scale", p.get("scale"));
+  if (/^[0-9a-f]{6}$/i.test(p.get("accent") || "")) root.style.setProperty("--accent", "#" + p.get("accent"));
+
+  const bar = document.getElementById("bar");
+  const label = document.getElementById("label");
+  const text = document.getElementById("text");
+  const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  let shown = "";
+
+  function render(slide) {
+    if (!slide) { bar.classList.remove("on"); return; }
+    const body = slide.song ? slide.verses.map(v => v.text).join("\n") : slide.verses.map(v => v.text).join(" ");
+    // Long passages get smaller text so the bar stays a lower third.
+    const em = body.length > 420 ? 2.3 : body.length > 260 ? 2.8 : 3.6;
+    root.style.setProperty("--text", em + "em");
+    bar.classList.toggle("song", slide.song);
+    const swap = () => {
+      label.innerHTML = esc(slide.label) + (slide.song ? "" : `<small>${esc(slide.translation)}</small>`);
+      text.textContent = body;
+      bar.classList.add("on");
+    };
+    if (bar.classList.contains("on")) { bar.classList.remove("on"); setTimeout(swap, 300); } else swap();
+  }
+
+  async function poll() {
+    try {
+      const s = await (await fetch("/api/state")).json();
+      const key = JSON.stringify(s.slide);
+      if (key !== shown) { shown = key; render(s.slide); }
+    } catch {}
+  }
+  poll();
+  setInterval(poll, 300);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0c0a09">
+<title>Follow along</title>
+<style>
+  :root { --bg: #fafaf9; --ink: #1c1917; --muted: #78716c; --line: #e7e5e4; --accent: #b45309; --chip: #f5f5f4; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0c0a09; --ink: #f5f5f4; --muted: #a8a29e; --line: #292524; --accent: #fbbf24; --chip: #1c1917; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body { font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; min-height: 100vh; }
+  header { position: sticky; top: 0; display: flex; gap: 8px; align-items: center; padding: 10px 16px;
+           padding-top: max(10px, env(safe-area-inset-top)); background: var(--bg); border-bottom: 1px solid var(--line); }
+  header .title { font-weight: 600; font-size: 14px; color: var(--muted); margin-right: auto; }
+  select, button { font: inherit; font-size: 14px; color: var(--ink); background: var(--chip); border: 1px solid var(--line);
+                   border-radius: 8px; padding: 6px 10px; }
+  button { min-width: 40px; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }
+  .label { color: var(--accent); font-weight: 650; letter-spacing: .02em; margin: 0 0 12px; }
+  .label small { color: var(--muted); font-weight: 500; margin-left: 6px; }
+  .text { font-family: Georgia, "Iowan Old Style", "Times New Roman", serif; font-size: var(--size, 22px); line-height: 1.55; margin: 0; }
+  .text sup { font-family: system-ui, sans-serif; font-size: .55em; color: var(--muted); margin-right: 3px; }
+  .song .text { white-space: pre-line; }
+  .waiting { color: var(--muted); text-align: center; margin-top: 30vh; }
+  .offline { color: var(--muted); font-size: 13px; text-align: center; margin-top: 24px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">Follow along</span>
+  <select id="tr" aria-label="Translation"></select>
+  <button id="smaller" aria-label="Smaller text">A−</button>
+  <button id="bigger" aria-label="Bigger text">A+</button>
+</header>
+<main id="main"><p class="waiting">Waiting for the next scripture…</p></main>
+<script>
+(() => {
+  const store = {
+    get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+  const main = document.getElementById("main");
+  const tr = document.getElementById("tr");
+  let size = Number(store.get("sb.size", 22));
+  let translation = store.get("sb.tr", "");
+  let shown = "";
+  let failures = 0;
+
+  const applySize = () => document.documentElement.style.setProperty("--size", size + "px");
+  applySize();
+  document.getElementById("smaller").onclick = () => { size = Math.max(14, size - 2); store.set("sb.size", size); applySize(); };
+  document.getElementById("bigger").onclick = () => { size = Math.min(44, size + 2); store.set("sb.size", size); applySize(); };
+
+  fetch("/api/translations").then(r => r.json()).then(list => {
+    tr.innerHTML = '<option value="">As projected</option>' +
+      list.map(t => `<option value="${t.code}">${t.code} — ${t.name}</option>`).join("");
+    tr.value = translation;
+  }).catch(() => {});
+  tr.onchange = () => { translation = tr.value; store.set("sb.tr", translation); shown = ""; poll(); };
+
+  const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  function render(slide) {
+    if (!slide) { main.innerHTML = '<p class="waiting">Waiting for the next scripture…</p>'; return; }
+    const body = slide.song
+      ? esc(slide.verses.map(v => v.text).join("\n"))
+      : slide.verses.map(v => (slide.verses.length > 1 ? `<sup>${v.verse}</sup>` : "") + esc(v.text)).join(" ");
+    main.className = slide.song ? "song" : "";
+    main.innerHTML = `<p class="label">${esc(slide.label)}${slide.song ? "" : `<small>${esc(slide.translation)}</small>`}</p><p class="text">${body}</p>`;
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch("/api/state" + (translation ? "?t=" + encodeURIComponent(translation) : ""));
+      const s = await r.json();
+      const key = JSON.stringify(s.slide);
+      if (key !== shown) { shown = key; render(s.slide); }
+      failures = 0;
+    } catch {
+      if (++failures === 3) main.insertAdjacentHTML("beforeend", '<p class="offline">Reconnecting…</p>');
+    }
+  }
+  poll();
+  setInterval(poll, 1000);
+})();
+</script>
+</body>
+</html>

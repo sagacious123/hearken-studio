@@ -1,0 +1,71 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Hearken Studio",
+  "version": "0.1.0",
+  "identifier": "com.hearkenstudio.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Hearken Studio — Operator",
+        "url": "index.html",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 700
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "resources/**/*"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libvulkan1",
+          "libasound2"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "vulkan-loader",
+          "alsa-lib"
+        ]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhCMDgxNzA3Qjk1RDRGNEYKUldSUFQxMjVCeGNJaS9GMzRIM0ZLd0xBN1A5Q2d5dlhHTStteVUwRFl0TDRMd2NkNkZRT2dRakMK",
+      "endpoints": [
+        "https://github.com/Sagacious123/hearken-studio/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

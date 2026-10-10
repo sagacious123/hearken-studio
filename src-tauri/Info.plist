@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Merged into the bundle's Info.plist by Tauri. Without this macOS silently delivers zeroed audio. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Hearken Studio listens to the sermon locally to detect Bible references. Audio never leaves this computer.</string>
+</dict>
+</plist>

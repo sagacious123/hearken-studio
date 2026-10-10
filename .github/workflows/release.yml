@@ -1,0 +1,110 @@
+# Builds signed installers + updater artifacts for every platform and attaches them, together
+# with `latest.json`, to a *draft* GitHub Release. Publishing the draft is what ships the update:
+# the app polls releases/latest/download/latest.json, which only resolves to published,
+# non-prerelease releases.
+#
+# Required repo secrets:
+#   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.tauri/hearkenstudio.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password
+# Optional (removes Gatekeeper / SmartScreen warnings; these cost money, everything else is free):
+#   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # Apple Silicon (Metal)
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - platform: macos-15-intel # Intel Macs (GitHub retired macos-13 in Dec 2025)
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+          - platform: windows-latest # Vulkan + CPU fallback
+            target: ""
+            args: ""
+          - platform: ubuntu-22.04 # Vulkan + CPU fallback
+            target: ""
+            args: ""
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # bible build needs SQLite with FTS5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: ${{ matrix.target }}
+
+      - name: Linux system deps (WebKitGTK, ALSA, Vulkan headers + glslc)
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libasound2-dev libvulkan-dev glslc
+
+      - name: Vulkan SDK (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.3.290.0
+          cache: true
+          stripdown: true
+
+      - name: Cache Whisper models
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/resources/models
+            src-tauri/resources/bench
+          key: whisper-models-v1-${{ hashFiles('scripts/fetch_models.sh') }}
+
+      - run: npm ci
+      - run: bash scripts/fetch_models.sh
+      # Public-domain translations aren't in git; fetch them (pinned sources) and build the DB.
+      - run: python scripts/fetch_bibles.py
+      - run: python scripts/build_bible_db.py --source data/translations --out src-tauri/resources/bible.db
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Hearken Studio ${{ github.ref_name }}
+          releaseBody: "See the assets below to download. Existing installs will offer this update automatically once published."
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
