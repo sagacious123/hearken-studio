@@ -120,6 +120,9 @@ def fetch(code, name, out_dir, force, source=None):
 
 
 def main():
+    # Windows consoles default to a legacy code page that can't print the progress arrows.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "data" / "translations"))
     ap.add_argument("--force", action="store_true", help="re-download files that already exist")

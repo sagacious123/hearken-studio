@@ -25,6 +25,8 @@ env:
   # Versions: https://vulkan.lunarg.com/sdk/home. LunarG renamed its installers in 2025, so
   # older versions' download links no longer work.
   VULKAN_VERSION: 1.4.363.0
+  # Windows consoles default to cp1252; the helper scripts print arrows and ticks.
+  PYTHONUTF8: "1"
 
 jobs:
   build:
@@ -75,7 +77,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev
+          # libvulkan-dev: the Vulkan loader library to link against. Recent LunarG Linux SDKs
+          # ship headers and glslc but no loader, so CMake can't find Vulkan_LIBRARY without it.
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libvulkan-dev
 
       - name: Cache Vulkan SDK
         if: runner.os != 'macOS'
