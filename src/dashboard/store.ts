@@ -43,6 +43,9 @@ interface DashboardState {
   /** Unapplied style edits: shown in Preview, not on the projector. */
   draftTheme: Theme | null;
   setDraftTheme: (theme: Theme | null) => void;
+  /** The Style drawer (slides in from the left; Preview stays visible). */
+  styleOpen: boolean;
+  setStyleOpen: (open: boolean) => void;
 
   settings: Settings | null;
   translations: Translation[];
@@ -57,6 +60,8 @@ interface DashboardState {
   dismiss: (id: string) => void;
   rebenchmark: () => Promise<void>;
 }
+
+const sameJson = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
 const sameChapter = (a: Detection, b: Detection) =>
   a.slide.reference.bookId === b.slide.reference.bookId && a.slide.reference.chapter === b.slide.reference.chapter;
@@ -77,6 +82,8 @@ export const useDashboard = create<DashboardState>((set, get) => ({
   live: null,
   draftTheme: null,
   setDraftTheme: (draftTheme) => set({ draftTheme }),
+  styleOpen: false,
+  setStyleOpen: (styleOpen) => set({ styleOpen }),
   settings: null,
   translations: [],
   profile: null,
@@ -120,7 +127,11 @@ export const useDashboard = create<DashboardState>((set, get) => ({
       events.status((status) => set({ status })),
       events.pipelineError((error) => set({ error, running: false })),
       events.pipelineWarning((warning) => set({ error: warning || null })),
-      events.outputState((live) => set({ live })),
+      // Keep the theme object identical while its content is: output events arrive with every
+      // follow-along highlight, and a "new" theme would make every preview refit its text.
+      events.outputState((live) =>
+        set((s) => ({ live: s.live && sameJson(s.live.theme, live.theme) ? { ...live, theme: s.live.theme } : live })),
+      ),
       events.hardwareProgress((benchProgress) => set({ benchProgress })),
     ]);
     return () => unlisteners.forEach((u) => u());

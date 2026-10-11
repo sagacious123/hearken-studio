@@ -63,7 +63,9 @@ function ChurchName() {
   const name = useDashboard((s) => s.settings?.churchName ?? "");
   const saveSettings = useDashboard((s) => s.saveSettings);
   const [value, setValue] = useState(name);
-  useEffect(() => setValue(name), [name]);
+  useEffect(() => {
+    setValue(name);
+  }, [name]);
   return (
     <label className="flex items-center gap-2 text-xs text-zinc-500">
       Recap heading
@@ -85,7 +87,10 @@ function ArchiveSearch() {
   const [hits, setHits] = useState<ArchiveHit[] | null>(null);
 
   useEffect(() => {
-    if (!query.trim()) return setHits(null);
+    if (!query.trim()) {
+      setHits(null);
+      return;
+    }
     const id = setTimeout(() => api.searchArchive(query).then(setHits).catch(() => setHits([])), 200);
     return () => clearTimeout(id);
   }, [query]);

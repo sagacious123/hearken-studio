@@ -1,5 +1,6 @@
-//! IPC surface. Commands that touch audio, models or the GPU are `async` and offload to the
-//! blocking pool — Tauri runs synchronous commands on the main thread.
+//! IPC surface. Tauri runs synchronous commands on the main (UI) thread, so anything that
+//! touches files, SQLite, audio devices or a shared lock is `async`; only trivial reads stay
+//! sync. Slow work (models, device enumeration) also moves to the blocking pool.
 
 use std::path::{Path, PathBuf};
 
@@ -37,7 +38,7 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 }
 
 #[tauri::command]
-pub fn update_settings(settings: Settings, app: AppHandle, state: State<'_, AppState>) -> CmdResult<Settings> {
+pub async fn update_settings(settings: Settings, app: AppHandle, state: State<'_, AppState>) -> CmdResult<Settings> {
     *state.settings.lock() = settings.clone();
     state.save_settings().map_err(err)?;
     // A sharing failure (port in use) is reported in the Share panel, not as a failed save.
@@ -102,8 +103,9 @@ async fn benchmark(app: &AppHandle, state: &AppState) -> CmdResult<HardwareProfi
 // ---------- pipeline ----------
 
 #[tauri::command]
-pub fn list_audio_devices() -> Vec<DeviceInfo> {
-    capture::list_devices()
+pub async fn list_audio_devices() -> CmdResult<Vec<DeviceInfo>> {
+    // CoreAudio enumeration takes 200–500 ms: never on the UI thread.
+    tauri::async_runtime::spawn_blocking(capture::list_devices).await.map_err(err)
 }
 
 #[tauri::command]
@@ -154,8 +156,8 @@ pub async fn stop_pipeline(state: State<'_, AppState>) -> CmdResult<()> {
 // ---------- scripture ----------
 
 #[tauri::command]
-pub fn list_translations(state: State<'_, AppState>) -> Vec<Translation> {
-    state.bible.lock().translations().to_vec()
+pub async fn list_translations(state: State<'_, AppState>) -> CmdResult<Vec<Translation>> {
+    Ok(state.bible.lock().translations().to_vec())
 }
 
 #[derive(Serialize)]
@@ -169,7 +171,7 @@ pub struct SearchResponse {
 }
 
 #[tauri::command]
-pub fn search_scripture(query: String, translation: String, state: State<'_, AppState>) -> CmdResult<SearchResponse> {
+pub async fn search_scripture(query: String, translation: String, state: State<'_, AppState>) -> CmdResult<SearchResponse> {
     let t0 = std::time::Instant::now();
     let bible = state.bible.lock();
     let secondary = secondary(&state);
@@ -192,7 +194,7 @@ pub fn search_scripture(query: String, translation: String, state: State<'_, App
 
 /// Re-resolve a reference (e.g. in another translation).
 #[tauri::command]
-pub fn build_slide(reference: ScriptureRef, translation: String, state: State<'_, AppState>) -> CmdResult<Option<Slide>> {
+pub async fn build_slide(reference: ScriptureRef, translation: String, state: State<'_, AppState>) -> CmdResult<Option<Slide>> {
     scripture::build_slide(&state.bible.lock(), &translation, secondary(&state).as_deref(), &reference).map_err(err)
 }
 
@@ -204,22 +206,25 @@ pub fn get_output_state(state: State<'_, AppState>) -> OutputState {
 }
 
 #[tauri::command]
-pub fn present(slide: Slide, app: AppHandle, state: State<'_, AppState>) {
+pub async fn present(slide: Slide, app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     state.presenter.present(&app, slide);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn clear_output(app: AppHandle, state: State<'_, AppState>) {
+pub async fn clear_output(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     state.presenter.clear(&app);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn set_blackout(on: bool, app: AppHandle, state: State<'_, AppState>) {
+pub async fn set_blackout(on: bool, app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     state.presenter.set_blackout(&app, on);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn set_theme(theme: serde_json::Value, app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+pub async fn set_theme(theme: serde_json::Value, app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     write_json(&state.paths.theme(), &theme).map_err(err)?;
     state.presenter.set_theme(&app, theme);
     Ok(())
@@ -227,7 +232,7 @@ pub fn set_theme(theme: serde_json::Value, app: AppHandle, state: State<'_, AppS
 
 /// Move the live slide forward/back by one verse (or song section).
 #[tauri::command]
-pub fn step_verse(delta: i32, app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+pub async fn step_verse(delta: i32, app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     step_live(&app, &state, delta)
 }
 
@@ -278,13 +283,14 @@ pub async fn close_output_window(app: AppHandle) -> CmdResult<()> {
 // ---------- sharing (phones, OBS overlay, remote) ----------
 
 #[tauri::command]
-pub fn get_share_info(state: State<'_, AppState>) -> ShareInfo {
-    state.share.info(state.settings.lock().share_port)
+pub async fn get_share_info(state: State<'_, AppState>) -> CmdResult<ShareInfo> {
+    let port = state.settings.lock().share_port;
+    Ok(state.share.info(port))
 }
 
 /// Show the "follow on your phone" QR code on the projector.
 #[tauri::command]
-pub fn show_qr(on: bool, app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+pub async fn show_qr(on: bool, app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     if on && !state.settings.lock().share_enabled {
         return Err("turn on sharing first".into());
     }
@@ -313,8 +319,8 @@ pub fn plan_slides(state: &AppState) -> Vec<Slide> {
 }
 
 #[tauri::command]
-pub fn get_plan(state: State<'_, AppState>) -> PlanInfo {
-    plan_info(&state)
+pub async fn get_plan(state: State<'_, AppState>) -> CmdResult<PlanInfo> {
+    Ok(plan_info(&state))
 }
 
 fn plan_info(state: &AppState) -> PlanInfo {
@@ -326,7 +332,7 @@ fn plan_info(state: &AppState) -> PlanInfo {
 
 /// Paste the pastor's notes: every reference in them is lined up and boosted when spoken.
 #[tauri::command]
-pub fn set_plan(text: String, state: State<'_, AppState>) -> CmdResult<PlanInfo> {
+pub async fn set_plan(text: String, state: State<'_, AppState>) -> CmdResult<PlanInfo> {
     std::fs::write(state.paths.plan(), &text).map_err(err)?;
     *state.plan.lock() = Plan::parse(&text, &state.versification);
     Ok(PlanInfo { text, slides: plan_slides(&state) })
@@ -335,55 +341,55 @@ pub fn set_plan(text: String, state: State<'_, AppState>) -> CmdResult<PlanInfo>
 // ---------- worship songs ----------
 
 #[tauri::command]
-pub fn list_songs(state: State<'_, AppState>) -> Vec<SongSummary> {
-    state.songs.summaries()
+pub async fn list_songs(state: State<'_, AppState>) -> CmdResult<Vec<SongSummary>> {
+    Ok(state.songs.summaries())
 }
 
 #[tauri::command]
-pub fn get_song_text(id: String, state: State<'_, AppState>) -> CmdResult<String> {
+pub async fn get_song_text(id: String, state: State<'_, AppState>) -> CmdResult<String> {
     state.songs.get(&id).map(|s| songs::to_text(&s)).ok_or_else(|| "song not found".into())
 }
 
 /// Add (no `id`) or replace a song from pasted lyrics.
 #[tauri::command]
-pub fn save_song(text: String, id: Option<String>, state: State<'_, AppState>) -> CmdResult<Vec<SongSummary>> {
+pub async fn save_song(text: String, id: Option<String>, state: State<'_, AppState>) -> CmdResult<Vec<SongSummary>> {
     state.songs.save(&text, id.as_deref()).map_err(err)?;
     Ok(state.songs.summaries())
 }
 
 #[tauri::command]
-pub fn delete_song(id: String, state: State<'_, AppState>) -> CmdResult<Vec<SongSummary>> {
+pub async fn delete_song(id: String, state: State<'_, AppState>) -> CmdResult<Vec<SongSummary>> {
     state.songs.delete(&id).map_err(err)?;
     Ok(state.songs.summaries())
 }
 
 #[tauri::command]
-pub fn song_slide(id: String, section: usize, state: State<'_, AppState>) -> Option<Slide> {
-    state.songs.get(&id).and_then(|s| songs::slide(&s, section))
+pub async fn song_slide(id: String, section: usize, state: State<'_, AppState>) -> CmdResult<Option<Slide>> {
+    Ok(state.songs.get(&id).and_then(|s| songs::slide(&s, section)))
 }
 
 // ---------- history: recaps, archive, insights, CCLI ----------
 
 #[tauri::command]
-pub fn list_sessions(state: State<'_, AppState>) -> Vec<DaySummary> {
-    state.history.summaries()
+pub async fn list_sessions(state: State<'_, AppState>) -> CmdResult<Vec<DaySummary>> {
+    Ok(state.history.summaries())
 }
 
 #[tauri::command]
-pub fn search_archive(query: String, state: State<'_, AppState>) -> Vec<ArchiveHit> {
+pub async fn search_archive(query: String, state: State<'_, AppState>) -> CmdResult<Vec<ArchiveHit>> {
     let parsed = ReferenceParser::new().parse(&query, true, &state.versification).into_iter().next();
-    state.history.search(&query, parsed.as_ref().map(|p| &p.reference), 100)
+    Ok(state.history.search(&query, parsed.as_ref().map(|p| &p.reference), 100))
 }
 
 #[tauri::command]
-pub fn get_insights(year: i32, state: State<'_, AppState>) -> Insights {
-    state.history.insights(year)
+pub async fn get_insights(year: i32, state: State<'_, AppState>) -> CmdResult<Insights> {
+    Ok(state.history.insights(year))
 }
 
 /// Writes the recap page to Documents/Hearken Studio and opens it in the browser
 /// (where it can be printed or saved as PDF). Returns the file path.
 #[tauri::command]
-pub fn export_recap(date: String, app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
+pub async fn export_recap(date: String, app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
     let recap = state.history.recap(&date);
     if recap.scriptures.is_empty() && recap.songs.is_empty() && recap.mentioned.is_empty() {
         return Err("nothing was detected or shown on that day".into());
@@ -397,7 +403,7 @@ pub fn export_recap(date: String, app: AppHandle, state: State<'_, AppState>) ->
 
 /// Song usage for the last `days` days, as CSV for CCLI reporting.
 #[tauri::command]
-pub fn export_ccli_report(days: i64, app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
+pub async fn export_ccli_report(days: i64, app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
     let path = export_dir(&app)?.join(format!("Song usage (last {days} days).csv"));
     std::fs::write(&path, state.history.ccli_csv(days)).map_err(err)?;
     open_path(&path);
@@ -479,14 +485,14 @@ mod tests {
 // ---------- uploaded backgrounds ----------
 
 #[tauri::command]
-pub fn list_backgrounds(state: State<'_, AppState>) -> Vec<UploadedBackground> {
-    backgrounds::list(&state.paths.backgrounds())
+pub async fn list_backgrounds(state: State<'_, AppState>) -> CmdResult<Vec<UploadedBackground>> {
+    Ok(backgrounds::list(&state.paths.backgrounds()))
 }
 
 /// Raw image bytes as the request body; the original file name in the
 /// `x-file-name` header (URI-encoded). Raw bytes avoid a slow JSON number array.
 #[tauri::command]
-pub fn save_background(request: tauri::ipc::Request<'_>, state: State<'_, AppState>) -> CmdResult<Vec<UploadedBackground>> {
+pub async fn save_background(request: tauri::ipc::Request<'_>, state: State<'_, AppState>) -> CmdResult<Vec<UploadedBackground>> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("expected the image bytes".into());
     };
@@ -502,7 +508,7 @@ pub fn save_background(request: tauri::ipc::Request<'_>, state: State<'_, AppSta
 }
 
 #[tauri::command]
-pub fn delete_background(file: String, state: State<'_, AppState>) -> CmdResult<Vec<UploadedBackground>> {
+pub async fn delete_background(file: String, state: State<'_, AppState>) -> CmdResult<Vec<UploadedBackground>> {
     let dir = state.paths.backgrounds();
     backgrounds::delete(&dir, &file).map_err(|e| format!("{e:#}"))?;
     Ok(backgrounds::list(&dir))
@@ -510,6 +516,6 @@ pub fn delete_background(file: String, state: State<'_, AppState>) -> CmdResult<
 
 /// Absolute path of an uploaded background, for the asset protocol (output window).
 #[tauri::command]
-pub fn background_path(file: String, state: State<'_, AppState>) -> Option<String> {
-    backgrounds::path(&state.paths.backgrounds(), &file)
+pub async fn background_path(file: String, state: State<'_, AppState>) -> CmdResult<Option<String>> {
+    Ok(backgrounds::path(&state.paths.backgrounds(), &file))
 }

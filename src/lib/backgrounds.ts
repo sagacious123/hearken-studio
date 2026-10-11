@@ -49,7 +49,10 @@ export function useBackgroundUrl(picture: string): string | null {
   const sample = picture.startsWith("sample:") ? SAMPLES.find((s) => s.id === picture.slice(7))?.url ?? null : null;
   const [upload, setUpload] = useState<string | null>(null);
   useEffect(() => {
-    if (!picture.startsWith("upload:")) return setUpload(null);
+    if (!picture.startsWith("upload:")) {
+      setUpload(null);
+      return;
+    }
     let live = true;
     void uploadUrl(picture.slice(7)).then((u) => live && setUpload(u));
     return () => {

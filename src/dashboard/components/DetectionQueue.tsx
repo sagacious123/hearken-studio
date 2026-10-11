@@ -32,9 +32,11 @@ export function DetectionQueue() {
 }
 
 function DetectionCard({ d }: { d: Detection }) {
-  const { setPreview, goLive, dismiss, preview, live } = useDashboard();
-  const isPreview = preview?.id === d.slide.id;
-  const isLive = live?.slide?.id === d.slide.id;
+  const setPreview = useDashboard((s) => s.setPreview);
+  const goLive = useDashboard((s) => s.goLive);
+  const dismiss = useDashboard((s) => s.dismiss);
+  const isPreview = useDashboard((s) => s.preview?.id === d.slide.id);
+  const isLive = useDashboard((s) => s.live?.slide?.id === d.slide.id);
   const pct = Math.round(d.confidence * 100);
   const color = d.confidence >= 0.9 ? "bg-emerald-500" : d.confidence >= 0.7 ? "bg-amber-400" : "bg-red-400";
 

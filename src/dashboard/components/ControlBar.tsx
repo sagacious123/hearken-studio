@@ -1,16 +1,40 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { api, type DeviceInfo, type MonitorInfo } from "../../lib/ipc";
 import { useDashboard } from "../store";
 import { ShareButton } from "./ShareButton";
 
+/** Device enumeration takes ~200–500 ms (off the UI thread), so don't repeat it within this. */
+const DEVICE_REFRESH_MS = 3000;
+
 export function ControlBar() {
-  const s = useDashboard();
+  // Only what the bar shows: the level meter and engine badge subscribe to their own
+  // fast-changing state, so this doesn't re-render ten times a second.
+  const s = useDashboard(
+    useShallow((st) => ({
+      running: st.running,
+      starting: st.starting,
+      benchProgress: st.benchProgress,
+      settings: st.settings,
+      translations: st.translations,
+      start: st.start,
+      stop: st.stop,
+      saveSettings: st.saveSettings,
+      styleOpen: st.styleOpen,
+      setStyleOpen: st.setStyleOpen,
+    })),
+  );
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
   const [monitor, setMonitor] = useState<number | null>(null);
+  const lastDeviceRefresh = useRef(0);
 
-  // Re-listed whenever the menu is opened, so a mic or interface plugged in later shows up.
-  const refreshDevices = () => void api.listAudioDevices().then(setDevices).catch(console.error);
+  // Refreshed as the pointer reaches the menu (before it opens), so a mic plugged in later shows up.
+  const refreshDevices = () => {
+    if (Date.now() - lastDeviceRefresh.current < DEVICE_REFRESH_MS) return;
+    lastDeviceRefresh.current = Date.now();
+    void api.listAudioDevices().then(setDevices).catch(console.error);
+  };
   useEffect(() => {
     refreshDevices();
     api.listMonitors().then(setMonitors).catch(console.error);
@@ -34,8 +58,8 @@ export function ControlBar() {
       <Field label="Input">
         <select
           disabled={s.running}
+          onMouseEnter={refreshDevices}
           onFocus={refreshDevices}
-          onMouseDown={refreshDevices}
           value={settings.inputDevice ?? ""}
           onChange={(e) => s.saveSettings({ inputDevice: e.target.value || null })}
           className="max-w-56 rounded bg-zinc-800 px-2 py-1"
@@ -50,7 +74,7 @@ export function ControlBar() {
         </select>
       </Field>
 
-      <LevelMeter db={s.status?.levelDb ?? -90} speaking={s.status?.speaking ?? false} />
+      <LevelMeter />
 
       <EngineBadge />
 
@@ -119,6 +143,13 @@ export function ControlBar() {
       </label>
 
       <div className="ml-auto flex items-center gap-2">
+        <button
+          onClick={() => s.setStyleOpen(!s.styleOpen)}
+          className={`rounded px-3 py-1 font-medium ${s.styleOpen ? "bg-amber-600 hover:bg-amber-500" : "bg-zinc-700 hover:bg-zinc-600"}`}
+          title="Fonts, colours and backgrounds"
+        >
+          Style
+        </button>
         <ShareButton />
         <select
           value={monitor ?? ""}
@@ -162,7 +193,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function LevelMeter({ db, speaking }: { db: number; speaking: boolean }) {
+function LevelMeter() {
+  const db = useDashboard((s) => s.status?.levelDb ?? -90);
+  const speaking = useDashboard((s) => s.status?.speaking ?? false);
   const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
   return (
     <div className="flex items-center gap-2" title={`${db.toFixed(0)} dBFS`}>
@@ -178,7 +211,17 @@ function LevelMeter({ db, speaking }: { db: number; speaking: boolean }) {
 }
 
 function EngineBadge() {
-  const { info, profile, status, lastLatencyMs, rebenchmark, running, benchProgress } = useDashboard();
+  const { info, profile, status, lastLatencyMs, rebenchmark, running, benchProgress } = useDashboard(
+    useShallow((s) => ({
+      info: s.info,
+      profile: s.profile,
+      status: s.status,
+      lastLatencyMs: s.lastLatencyMs,
+      rebenchmark: s.rebenchmark,
+      running: s.running,
+      benchProgress: s.benchProgress,
+    })),
+  );
   const model = info?.model ?? profile?.model ?? "—";
   const backend = info?.backend ?? (profile ? (profile.useGpu ? "gpu" : "cpu") : "—");
   const title = profile

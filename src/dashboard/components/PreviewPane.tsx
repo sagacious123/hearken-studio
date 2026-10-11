@@ -4,11 +4,14 @@ import { parseTheme } from "../../lib/theme";
 import { SlideView } from "../../output/SlideView";
 import { Stage } from "../../output/Stage";
 import { useDashboard } from "../store";
-import { DraftBar, StylePanel } from "./StylePanel";
+import { DraftBar } from "./StylePanel";
 import { PanelHeader } from "./TranscriptPanel";
 
 export function PreviewPane() {
-  const { preview, live, goLive, draftTheme } = useDashboard();
+  const preview = useDashboard((s) => s.preview);
+  const live = useDashboard((s) => s.live);
+  const goLive = useDashboard((s) => s.goLive);
+  const draftTheme = useDashboard((s) => s.draftTheme);
   const theme = useMemo(() => parseTheme(live?.theme), [live?.theme]);
   // Preview shows unapplied style edits; the Live mirror always shows what's on screen.
   const previewTheme = draftTheme ?? theme;
@@ -51,7 +54,6 @@ export function PreviewPane() {
         </div>
       </div>
 
-      <StylePanel />
     </section>
   );
 }

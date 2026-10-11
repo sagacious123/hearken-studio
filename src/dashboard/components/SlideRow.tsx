@@ -3,9 +3,10 @@ import { useDashboard } from "../store";
 
 /** A slide in a list: click to preview, double-click or "Live" to put it on screen. */
 export function SlideRow({ slide, title, badge }: { slide: Slide; title?: string; badge?: string }) {
-  const { setPreview, goLive, preview, live } = useDashboard();
-  const isLive = live?.slide?.id === slide.id;
-  const isPreview = preview?.id === slide.id;
+  const setPreview = useDashboard((s) => s.setPreview);
+  const goLive = useDashboard((s) => s.goLive);
+  const isLive = useDashboard((s) => s.live?.slide?.id === slide.id);
+  const isPreview = useDashboard((s) => s.preview?.id === slide.id);
   return (
     <li
       onClick={() => setPreview(slide)}

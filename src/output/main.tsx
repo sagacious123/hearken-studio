@@ -35,7 +35,10 @@ function OutputApp() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const theme = useMemo(() => parseTheme(state?.theme), [state?.theme]);
+  // Keyed on content: output events (e.g. follow-along highlights) carry a fresh theme object
+  // each time, and a new theme would refit the text on every one.
+  const themeJson = JSON.stringify(state?.theme ?? null);
+  const theme = useMemo(() => parseTheme(JSON.parse(themeJson)), [themeJson]);
 
   return (
     <Stage background={theme.background.color}>

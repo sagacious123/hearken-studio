@@ -6,7 +6,11 @@ export function TranscriptPanel() {
   const partial = useDashboard((s) => s.partial);
   const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [finals, partial]);
+  // Braces matter: newer engines return a Promise from scrollIntoView, and an effect that
+  // returns a non-function makes React throw (and blank the dashboard) on the next update.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [finals, partial]);
 
   return (
     <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3 text-[15px] leading-relaxed">

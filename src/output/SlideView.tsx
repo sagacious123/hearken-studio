@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
 import "../assets/fonts/fonts.css";
 import { useBackgroundUrl } from "../lib/backgrounds";
 import type { OutputState, Reading, Slide, VerseLine } from "../lib/ipc";
@@ -21,8 +21,11 @@ interface Layer {
   slide: Slide | null;
 }
 
-/** Full-stage slide renderer with GPU-composited crossfades (opacity-only animations). */
-export function SlideView({ slide, theme, blackout, reading = null, qr = null }: Props) {
+/**
+ * Full-stage slide renderer with GPU-composited crossfades (opacity-only animations).
+ * Memoised: the dashboard's Preview stage needn't re-render when only the live slide changes.
+ */
+export const SlideView = memo(function SlideView({ slide, theme, blackout, reading = null, qr = null }: Props) {
   const keyRef = useRef(1);
   const [layers, setLayers] = useState<Layer[]>([{ key: 0, slide }]);
 
@@ -85,7 +88,7 @@ export function SlideView({ slide, theme, blackout, reading = null, qr = null }:
       <div className="sb-fill sb-blackout" style={{ opacity: blackout ? 1 : 0 }} />
     </div>
   );
-}
+});
 
 function SlideContent({ slide, theme, reading }: { slide: Slide; theme: Theme; reading: Reading | null }) {
   const { text, reference, layout } = theme;

@@ -17,14 +17,16 @@ const DEFAULT_SHADOW = DEFAULT_THEME.text.shadow;
 const DEFAULT_READ = DEFAULT_THEME.text.readColor;
 
 /**
- * Visual theme editor. Edits go to a draft shown in the Preview pane; nothing reaches the
- * projector until "Apply to screen", so restyling mid-service is safe.
+ * Visual theme editor in a drawer that slides in from the left, over the transcript and
+ * detections, so the Preview stays in view while styling. Edits go to a draft shown in
+ * Preview; nothing reaches the projector until "Apply to screen".
  */
-export function StylePanel() {
+export function StyleDrawer() {
+  const open = useDashboard((s) => s.styleOpen);
+  const setOpen = useDashboard((s) => s.setStyleOpen);
   const liveTheme = useDashboard((s) => s.live?.theme);
   const draft = useDashboard((s) => s.draftTheme);
   const setDraft = useDashboard((s) => s.setDraftTheme);
-  const [open, setOpen] = useState(false);
   const theme = draft ?? parseTheme(liveTheme);
 
   /** Copy, change, validate; the draft is always a well-formed theme. */
@@ -35,36 +37,44 @@ export function StylePanel() {
   };
 
   return (
-    <div className="flex-none border-t border-zinc-800">
-      <button onClick={() => setOpen(!open)} className="w-full px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-zinc-400">
-        {open ? "▾" : "▸"} Style: fonts & background
-      </button>
-      {open && (
-        <div className="space-y-4 px-3 pb-4 text-sm">
-          <Presets current={theme} onPick={(t) => setDraft(parseTheme(structuredClone(t)))} />
-          <BackgroundSection theme={theme} edit={edit} />
-          <TextSection theme={theme} edit={edit} />
-          <ReferenceSection theme={theme} edit={edit} />
-          <Section title="Layout">
-            <Slider label="Margins" value={theme.layout.paddingPct} min={0} max={15} step={0.5} format={(v) => `${v}%`} onChange={(v) => edit((t) => void (t.layout.paddingPct = v))} />
-            <Row label="Transition">
-              <Segmented
-                value={theme.transition.type}
-                options={[
-                  ["fade", "Fade"],
-                  ["none", "Cut"],
-                ]}
-                onChange={(v) => edit((t) => void (t.transition.type = v as Theme["transition"]["type"]))}
-              />
-            </Row>
-            {theme.transition.type === "fade" && (
-              <Slider label="Fade length" value={theme.transition.durationMs} min={100} max={1500} step={50} format={(v) => `${v} ms`} onChange={(v) => edit((t) => void (t.transition.durationMs = v))} />
-            )}
-          </Section>
-          <AdvancedJson theme={theme} onUse={(t) => setDraft(t)} />
-        </div>
-      )}
-    </div>
+    <aside
+      aria-label="Style"
+      inert={!open}
+      className={`absolute inset-y-0 left-0 z-30 flex w-[26rem] max-w-[calc(100%-26rem)] flex-col bg-zinc-950 shadow-2xl ring-1 ring-zinc-800 transition-transform duration-200 ease-out motion-reduce:transition-none ${
+        open ? "translate-x-0" : "-translate-x-full"
+      }`}
+    >
+      <header className="flex h-10 flex-none items-center justify-between border-b border-zinc-800 px-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">
+        Style: fonts & background
+        <button onClick={() => setOpen(false)} className="rounded px-1.5 text-base leading-none text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label="Close style">
+          ×
+        </button>
+      </header>
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3 text-sm">
+        <Presets current={theme} onPick={(t) => setDraft(parseTheme(structuredClone(t)))} />
+        <BackgroundSection theme={theme} edit={edit} />
+        <TextSection theme={theme} edit={edit} />
+        <ReferenceSection theme={theme} edit={edit} />
+        <Section title="Layout">
+          <Slider label="Margins" value={theme.layout.paddingPct} min={0} max={15} step={0.5} format={(v) => `${v}%`} onChange={(v) => edit((t) => void (t.layout.paddingPct = v))} />
+          <Row label="Transition">
+            <Segmented
+              value={theme.transition.type}
+              options={[
+                ["fade", "Fade"],
+                ["none", "Cut"],
+              ]}
+              onChange={(v) => edit((t) => void (t.transition.type = v as Theme["transition"]["type"]))}
+            />
+          </Row>
+          {theme.transition.type === "fade" && (
+            <Slider label="Fade length" value={theme.transition.durationMs} min={100} max={1500} step={50} format={(v) => `${v} ms`} onChange={(v) => edit((t) => void (t.transition.durationMs = v))} />
+          )}
+        </Section>
+        <AdvancedJson theme={theme} onUse={(t) => setDraft(t)} />
+      </div>
+      <DraftBar />
+    </aside>
   );
 }
 
