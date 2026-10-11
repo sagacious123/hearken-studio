@@ -6,9 +6,15 @@ export interface Theme {
   name: string;
   background: {
     color: string;
-    /** Any CSS background-image value, e.g. a gradient or url(data:…). */
+    /** "" | "sample:<id>" (bundled) | "upload:<file>" (the church's own image). */
+    picture: string;
+    /** Darken the picture for legibility: 0 (none) to 0.9. */
+    dim: number;
+    /** Soften a busy photo, in stage px. */
+    blurPx: number;
+    /** Advanced: any CSS background-image value, e.g. a gradient. Used when there's no picture. */
     image: string;
-    /** Darkening layer over the image for legibility, e.g. "rgba(0,0,0,0.45)". */
+    /** Advanced: extra CSS layer over the background, e.g. "rgba(0,0,0,0.45)". */
     overlay: string;
   };
   text: {
@@ -48,7 +54,7 @@ export interface Theme {
 export const DEFAULT_THEME: Theme = {
   version: 1,
   name: "Classic Dark",
-  background: { color: "#05070d", image: "", overlay: "" },
+  background: { color: "#05070d", picture: "", dim: 0, blurPx: 0, image: "", overlay: "" },
   text: {
     fontFamily: 'Georgia, "Iowan Old Style", "Times New Roman", serif',
     color: "#f8fafc",
@@ -82,6 +88,8 @@ const ENUMS: Record<string, readonly string[]> = {
 };
 
 const RANGES: Record<string, [number, number]> = {
+  "background.dim": [0, 0.9],
+  "background.blurPx": [0, 30],
   "text.weight": [100, 900],
   "text.lineHeight": [0.9, 2.5],
   "text.minPx": [12, 200],
@@ -122,3 +130,66 @@ export function parseThemeJson(json: string): { theme: Theme } | { error: string
     return { error: e instanceof Error ? e.message : String(e) };
   }
 }
+
+export interface FontChoice {
+  label: string;
+  stack: string;
+  /** Shipped with the app (same look on every computer, offline). */
+  bundled: boolean;
+}
+
+export const FONTS: FontChoice[] = [
+  { label: "Georgia", stack: DEFAULT_THEME.text.fontFamily, bundled: false },
+  { label: "Lora", stack: '"Lora", Georgia, serif', bundled: true },
+  { label: "Merriweather", stack: '"Merriweather", Georgia, serif', bundled: true },
+  { label: "Playfair Display", stack: '"Playfair Display", Georgia, serif', bundled: true },
+  { label: "EB Garamond", stack: '"EB Garamond", Garamond, Georgia, serif', bundled: true },
+  { label: "Inter", stack: '"Inter", system-ui, sans-serif', bundled: true },
+  { label: "Montserrat", stack: '"Montserrat", system-ui, sans-serif', bundled: true },
+  { label: "Nunito", stack: '"Nunito", system-ui, sans-serif', bundled: true },
+  { label: "Oswald", stack: '"Oswald", "Arial Narrow", sans-serif', bundled: true },
+  { label: "System sans-serif", stack: DEFAULT_THEME.reference.fontFamily, bundled: false },
+  { label: "Helvetica / Arial", stack: '"Helvetica Neue", Helvetica, Arial, sans-serif', bundled: false },
+  { label: "Times", stack: '"Times New Roman", Times, serif', bundled: false },
+];
+
+type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
+
+function preset(name: string, patch: DeepPartial<Theme>): Theme {
+  const t = structuredClone(DEFAULT_THEME);
+  for (const [k, v] of Object.entries(patch)) Object.assign((t as unknown as Record<string, object>)[k], v);
+  return { ...t, name };
+}
+
+const font = (label: string) => FONTS.find((f) => f.label === label)!.stack;
+
+/** One-click starting points; everything can be adjusted afterwards. */
+export const PRESETS: Theme[] = [
+  DEFAULT_THEME,
+  preset("Sunrise", {
+    background: { picture: "sample:dawn", dim: 0.35 },
+    text: { fontFamily: font("Lora") },
+    reference: { color: "#fde68a" },
+  }),
+  preset("Night sky", {
+    background: { picture: "sample:night-sky", dim: 0.15 },
+    text: { fontFamily: font("Inter"), weight: 400 },
+    reference: { fontFamily: font("Inter"), color: "#93c5fd" },
+  }),
+  preset("Clean light", {
+    background: { color: "#f5efe3", picture: "sample:linen" },
+    text: { fontFamily: font("Merriweather"), color: "#1c1917", weight: 400, shadow: "", readColor: "#b45309" },
+    reference: { color: "#b45309" },
+  }),
+  preset("Bold", {
+    background: { color: "#0b0b0f" },
+    text: { fontFamily: font("Montserrat"), weight: 700, lineHeight: 1.2 },
+    reference: { fontFamily: font("Oswald"), color: "#22d3ee", sizePx: 52 },
+  }),
+  preset("Calvary", {
+    background: { picture: "sample:calvary", dim: 0.3 },
+    text: { fontFamily: font("Playfair Display"), align: "left" },
+    reference: { color: "#fbbf24" },
+    layout: { verticalAlign: "top" },
+  }),
+];

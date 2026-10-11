@@ -12,6 +12,7 @@ import {
   type TranscriptEvent,
   type Translation,
 } from "../lib/ipc";
+import type { Theme } from "../lib/theme";
 
 const MAX_FINALS = 60;
 const MAX_QUEUE = 40;
@@ -39,6 +40,9 @@ interface DashboardState {
   preview: Slide | null;
   followLatest: boolean;
   live: OutputState | null;
+  /** Unapplied style edits: shown in Preview, not on the projector. */
+  draftTheme: Theme | null;
+  setDraftTheme: (theme: Theme | null) => void;
 
   settings: Settings | null;
   translations: Translation[];
@@ -71,6 +75,8 @@ export const useDashboard = create<DashboardState>((set, get) => ({
   preview: null,
   followLatest: true,
   live: null,
+  draftTheme: null,
+  setDraftTheme: (draftTheme) => set({ draftTheme }),
   settings: null,
   translations: [],
   profile: null,

@@ -160,6 +160,13 @@ export interface SearchResponse {
   elapsedMs: number;
 }
 
+export interface UploadedBackground {
+  /** File in the backgrounds folder; themes refer to it as "upload:<file>". */
+  file: string;
+  name: string;
+  path: string;
+}
+
 export interface ShareInfo {
   enabled: boolean;
   port: number;
@@ -249,6 +256,14 @@ export const api = {
   getInsights: (year: number) => invoke<Insights>("get_insights", { year }),
   exportRecap: (date: string) => invoke<string>("export_recap", { date }),
   exportCcliReport: (days: number) => invoke<string>("export_ccli_report", { days }),
+  listBackgrounds: () => invoke<UploadedBackground[]>("list_backgrounds"),
+  /** Sends the raw bytes (fast) with the original name in a header. */
+  saveBackground: async (file: File) =>
+    invoke<UploadedBackground[]>("save_background", new Uint8Array(await file.arrayBuffer()), {
+      headers: { "x-file-name": encodeURIComponent(file.name) },
+    }),
+  deleteBackground: (file: string) => invoke<UploadedBackground[]>("delete_background", { file }),
+  backgroundPath: (file: string) => invoke<string | null>("background_path", { file }),
 };
 
 const on =

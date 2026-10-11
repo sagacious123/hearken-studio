@@ -1,5 +1,6 @@
 mod asr;
 mod audio;
+mod backgrounds;
 mod commands;
 mod follow;
 mod history;
@@ -87,6 +88,10 @@ pub fn run() {
             commands::get_insights,
             commands::export_recap,
             commands::export_ccli_report,
+            commands::list_backgrounds,
+            commands::save_background,
+            commands::delete_background,
+            commands::background_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hearken Studio");

@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type SearchResponse, type Slide } from "../../lib/ipc";
-import { DEFAULT_THEME, parseTheme, parseThemeJson } from "../../lib/theme";
+import { parseTheme } from "../../lib/theme";
 import { SlideView } from "../../output/SlideView";
 import { Stage } from "../../output/Stage";
 import { useDashboard } from "../store";
+import { DraftBar, StylePanel } from "./StylePanel";
 import { PanelHeader } from "./TranscriptPanel";
 
 export function PreviewPane() {
-  const { preview, live, goLive } = useDashboard();
+  const { preview, live, goLive, draftTheme } = useDashboard();
   const theme = useMemo(() => parseTheme(live?.theme), [live?.theme]);
+  // Preview shows unapplied style edits; the Live mirror always shows what's on screen.
+  const previewTheme = draftTheme ?? theme;
 
   return (
     <section className="flex min-h-0 flex-col overflow-y-auto bg-zinc-950">
@@ -23,10 +26,11 @@ export function PreviewPane() {
           Go live ⏎
         </button>
       </PanelHeader>
+      <DraftBar />
       <div className="aspect-video flex-none p-3">
-        <div className="h-full overflow-hidden rounded-md ring-1 ring-zinc-800">
-          <Stage background={theme.background.color}>
-            <SlideView slide={preview} theme={theme} blackout={false} />
+        <div className={`h-full overflow-hidden rounded-md ring-1 ${draftTheme ? "ring-amber-500" : "ring-zinc-800"}`}>
+          <Stage background={previewTheme.background.color}>
+            <SlideView slide={preview ?? (draftTheme ? SAMPLE_SLIDE : null)} theme={previewTheme} blackout={false} />
           </Stage>
         </div>
       </div>
@@ -47,7 +51,7 @@ export function PreviewPane() {
         </div>
       </div>
 
-      <ThemeEditor current={live?.theme} />
+      <StylePanel />
     </section>
   );
 }
@@ -117,46 +121,11 @@ function SearchBox() {
   );
 }
 
-function ThemeEditor({ current }: { current: unknown }) {
-  const [open, setOpen] = useState(false);
-  const [json, setJson] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open) setJson(JSON.stringify(parseTheme(current ?? DEFAULT_THEME), null, 2));
-  }, [open, current]);
-
-  const apply = () => {
-    const r = parseThemeJson(json);
-    if ("error" in r) return setError(r.error);
-    setError(null);
-    void api.setTheme(r.theme);
-  };
-
-  return (
-    <div className="flex-none border-t border-zinc-800">
-      <button onClick={() => setOpen(!open)} className="w-full px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-zinc-400">
-        {open ? "▾" : "▸"} Theme (JSON)
-      </button>
-      {open && (
-        <div className="space-y-2 px-3 pb-3">
-          <textarea
-            value={json}
-            onChange={(e) => setJson(e.target.value)}
-            spellCheck={false}
-            className="h-64 w-full rounded-md bg-zinc-900 p-2 font-mono text-xs ring-1 ring-zinc-800"
-          />
-          {error && <p className="text-xs text-red-400">{error}</p>}
-          <div className="flex gap-2">
-            <button onClick={apply} className="rounded bg-amber-600 px-3 py-1 text-sm font-medium hover:bg-amber-500">
-              Apply to output
-            </button>
-            <button onClick={() => setJson(JSON.stringify(DEFAULT_THEME, null, 2))} className="rounded bg-zinc-800 px-3 py-1 text-sm">
-              Reset to default
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+/** Something to style against when nothing is in Preview yet. */
+const SAMPLE_SLIDE: Slide = {
+  id: "style-sample",
+  label: "Psalm 23:1",
+  translation: "KJV",
+  reference: { bookId: 19, chapter: 23, verseStart: 1, verseEnd: null },
+  verses: [{ verse: 1, text: "The LORD is my shepherd; I shall not want." }],
+};

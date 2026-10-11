@@ -98,3 +98,7 @@
   opacity: 0.75;
   margin-top: 6px;
 }
+.sb-bg {
+  background-size: cover;
+  background-position: center;
+}

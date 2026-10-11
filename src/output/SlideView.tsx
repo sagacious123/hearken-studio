@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import "../assets/fonts/fonts.css";
+import { useBackgroundUrl } from "../lib/backgrounds";
 import type { OutputState, Reading, Slide, VerseLine } from "../lib/ipc";
 import type { Theme } from "../lib/theme";
 import { useFitText } from "./useFitText";
@@ -38,16 +40,24 @@ export function SlideView({ slide, theme, blackout, reading = null, qr = null }:
   }, [slide, theme.transition.type]);
 
   const { background: bg } = theme;
-  const style = {
-    "--sb-fade": `${theme.transition.durationMs}ms`,
-    background: bg.color,
-    backgroundImage: bg.image || undefined,
-    backgroundSize: "cover",
-    backgroundPosition: "center",
-  } as CSSProperties;
+  const picture = useBackgroundUrl(bg.picture);
+  const style = { "--sb-fade": `${theme.transition.durationMs}ms`, background: bg.color } as CSSProperties;
+  const image = picture ? `url("${picture}")` : bg.image;
 
   return (
     <div className="sb-stage" style={style}>
+      {image && (
+        // Own layer so blur softens only the picture; scaled up so blurred edges stay off-screen.
+        <div
+          className="sb-fill sb-bg"
+          style={{
+            backgroundImage: image,
+            filter: bg.blurPx ? `blur(${bg.blurPx}px)` : undefined,
+            transform: bg.blurPx ? "scale(1.06)" : undefined,
+          }}
+        />
+      )}
+      {image && bg.dim > 0 && <div className="sb-fill" style={{ background: `rgba(0,0,0,${bg.dim})` }} />}
       {bg.overlay && <div className="sb-fill" style={{ background: bg.overlay }} />}
       {layers.map((layer, i) => {
         const outgoing = i < layers.length - 1;

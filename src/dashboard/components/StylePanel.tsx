@@ -1,0 +1,443 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { forgetUpload, SAMPLES } from "../../lib/backgrounds";
+import { api, type UploadedBackground } from "../../lib/ipc";
+import { DEFAULT_THEME, FONTS, parseTheme, parseThemeJson, PRESETS, type Theme } from "../../lib/theme";
+import { useDashboard } from "../store";
+
+const WEIGHTS: [number, string][] = [
+  [300, "Light"],
+  [400, "Regular"],
+  [500, "Medium"],
+  [600, "Semibold"],
+  [700, "Bold"],
+  [800, "Extra bold"],
+];
+const DEFAULT_SHADOW = DEFAULT_THEME.text.shadow;
+const DEFAULT_READ = DEFAULT_THEME.text.readColor;
+
+/**
+ * Visual theme editor. Edits go to a draft shown in the Preview pane; nothing reaches the
+ * projector until "Apply to screen", so restyling mid-service is safe.
+ */
+export function StylePanel() {
+  const liveTheme = useDashboard((s) => s.live?.theme);
+  const draft = useDashboard((s) => s.draftTheme);
+  const setDraft = useDashboard((s) => s.setDraftTheme);
+  const [open, setOpen] = useState(false);
+  const theme = draft ?? parseTheme(liveTheme);
+
+  /** Copy, change, validate; the draft is always a well-formed theme. */
+  const edit = (change: (t: Theme) => void) => {
+    const next = structuredClone(theme);
+    change(next);
+    setDraft(parseTheme(next));
+  };
+
+  return (
+    <div className="flex-none border-t border-zinc-800">
+      <button onClick={() => setOpen(!open)} className="w-full px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-zinc-400">
+        {open ? "▾" : "▸"} Style: fonts & background
+      </button>
+      {open && (
+        <div className="space-y-4 px-3 pb-4 text-sm">
+          <Presets current={theme} onPick={(t) => setDraft(parseTheme(structuredClone(t)))} />
+          <BackgroundSection theme={theme} edit={edit} />
+          <TextSection theme={theme} edit={edit} />
+          <ReferenceSection theme={theme} edit={edit} />
+          <Section title="Layout">
+            <Slider label="Margins" value={theme.layout.paddingPct} min={0} max={15} step={0.5} format={(v) => `${v}%`} onChange={(v) => edit((t) => void (t.layout.paddingPct = v))} />
+            <Row label="Transition">
+              <Segmented
+                value={theme.transition.type}
+                options={[
+                  ["fade", "Fade"],
+                  ["none", "Cut"],
+                ]}
+                onChange={(v) => edit((t) => void (t.transition.type = v as Theme["transition"]["type"]))}
+              />
+            </Row>
+            {theme.transition.type === "fade" && (
+              <Slider label="Fade length" value={theme.transition.durationMs} min={100} max={1500} step={50} format={(v) => `${v} ms`} onChange={(v) => edit((t) => void (t.transition.durationMs = v))} />
+            )}
+          </Section>
+          <AdvancedJson theme={theme} onUse={(t) => setDraft(t)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Shown above the Preview while there are unapplied style changes. */
+export function DraftBar() {
+  const draft = useDashboard((s) => s.draftTheme);
+  const setDraft = useDashboard((s) => s.setDraftTheme);
+  const [error, setError] = useState<string | null>(null);
+  if (!draft) return null;
+  return (
+    <div className="flex flex-none items-center gap-2 bg-amber-950/60 px-3 py-1.5 text-xs text-amber-100">
+      <span className="flex-1">Style changes are shown in Preview only.{error && <span className="ml-1 text-red-300">{error}</span>}</span>
+      <button
+        onClick={() =>
+          void api
+            .setTheme(draft)
+            .then(() => {
+              setDraft(null);
+              setError(null);
+            })
+            .catch((e) => setError(String(e)))
+        }
+        className="rounded bg-amber-600 px-2 py-0.5 font-semibold text-white hover:bg-amber-500"
+      >
+        Apply to screen
+      </button>
+      <button onClick={() => setDraft(null)} className="rounded px-2 py-0.5 hover:bg-amber-900">
+        Discard
+      </button>
+    </div>
+  );
+}
+
+type Edit = (change: (t: Theme) => void) => void;
+
+function Presets({ current, onPick }: { current: Theme; onPick: (t: Theme) => void }) {
+  return (
+    <Section title="Start from">
+      <div className="flex flex-wrap gap-1.5">
+        {PRESETS.map((p) => (
+          <button
+            key={p.name}
+            onClick={() => onPick(p)}
+            className={`rounded-full px-2.5 py-1 text-xs ring-1 ${current.name === p.name ? "bg-amber-600 ring-amber-500" : "bg-zinc-900 ring-zinc-700 hover:ring-zinc-500"}`}
+          >
+            {p.name}
+          </button>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function BackgroundSection({ theme, edit }: { theme: Theme; edit: Edit }) {
+  const [uploads, setUploads] = useState<UploadedBackground[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const bg = theme.background;
+  const pick = (picture: string) => edit((t) => void (t.background.picture = picture));
+
+  useEffect(() => {
+    api.listBackgrounds().then(setUploads).catch((e) => setError(String(e)));
+  }, []);
+
+  const upload = async (files: FileList) => {
+    setBusy(true);
+    setError(null);
+    let list = uploads;
+    const failed: string[] = [];
+    for (const f of Array.from(files)) {
+      try {
+        list = await api.saveBackground(f);
+      } catch (e) {
+        failed.push(`${f.name}: ${String(e)}`);
+      }
+    }
+    setUploads(list);
+    setBusy(false);
+    if (failed.length) setError(failed.join("; "));
+    else if (list[0]) pick(`upload:${list[0].file}`); // newest first: show what was just added
+  };
+
+  const remove = async (u: UploadedBackground) => {
+    if (!window.confirm(`Delete “${u.name}” from your backgrounds?`)) return;
+    try {
+      setUploads(await api.deleteBackground(u.file));
+      forgetUpload(u.file);
+      if (bg.picture === `upload:${u.file}`) pick("");
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  return (
+    <Section title="Background">
+      <div className="grid grid-cols-4 gap-1.5">
+        <Tile selected={!bg.picture} onClick={() => pick("")} label="Colour only">
+          <div className="h-full w-full" style={{ background: bg.color }} />
+        </Tile>
+        {SAMPLES.map((s) => (
+          <Tile key={s.id} selected={bg.picture === `sample:${s.id}`} onClick={() => pick(`sample:${s.id}`)} label={s.name}>
+            <img src={s.url} alt="" className="h-full w-full object-cover" />
+          </Tile>
+        ))}
+        {uploads.map((u) => (
+          <Tile key={u.file} selected={bg.picture === `upload:${u.file}`} onClick={() => pick(`upload:${u.file}`)} label={u.name} onDelete={() => void remove(u)}>
+            <img src={convertFileSrc(u.path)} alt="" className="h-full w-full object-cover" />
+          </Tile>
+        ))}
+        <button
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          className="flex aspect-video flex-col items-center justify-center rounded border border-dashed border-zinc-600 text-xs text-zinc-400 hover:border-amber-500 hover:text-amber-300 disabled:opacity-50"
+        >
+          <span className="text-lg leading-none">+</span>
+          {busy ? "Adding…" : "Upload"}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files?.length) void upload(e.target.files);
+            e.target.value = "";
+          }}
+        />
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      <Row label="Colour">
+        <Color value={bg.color} onChange={(v) => edit((t) => void (t.background.color = v))} />
+        <span className="text-xs text-zinc-500">{bg.picture ? "shows at the edges while the picture loads" : ""}</span>
+      </Row>
+      {bg.picture && (
+        <>
+          <Slider label="Darken" value={bg.dim} min={0} max={0.9} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => edit((t) => void (t.background.dim = v))} />
+          <Slider label="Soften" value={bg.blurPx} min={0} max={20} step={1} format={(v) => (v ? `${v}px` : "off")} onChange={(v) => edit((t) => void (t.background.blurPx = v))} />
+        </>
+      )}
+    </Section>
+  );
+}
+
+function TextSection({ theme, edit }: { theme: Theme; edit: Edit }) {
+  const text = theme.text;
+  return (
+    <Section title="Verse text">
+      <Row label="Font">
+        <FontSelect value={text.fontFamily} onChange={(v) => edit((t) => void (t.text.fontFamily = v))} />
+        <select value={text.weight} onChange={(e) => edit((t) => void (t.text.weight = Number(e.target.value)))} className="rounded bg-zinc-800 px-2 py-1">
+          {WEIGHTS.map(([w, l]) => (
+            <option key={w} value={w}>
+              {l}
+            </option>
+          ))}
+        </select>
+      </Row>
+      <Row label="Colour">
+        <Color value={text.color} onChange={(v) => edit((t) => void (t.text.color = v))} />
+      </Row>
+      <Slider
+        label="Size (largest)"
+        value={text.maxPx}
+        min={40}
+        max={200}
+        step={2}
+        format={(v) => `${v}px`}
+        onChange={(v) =>
+          edit((t) => {
+            t.text.maxPx = v;
+            t.text.minPx = Math.min(t.text.minPx, v);
+          })
+        }
+      />
+      <Slider label="Line spacing" value={text.lineHeight} min={1} max={2} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => edit((t) => void (t.text.lineHeight = v))} />
+      <Row label="Align">
+        <Segmented
+          value={text.align}
+          options={[
+            ["left", "Left"],
+            ["center", "Centre"],
+            ["right", "Right"],
+          ]}
+          onChange={(v) => edit((t) => void (t.text.align = v as Theme["text"]["align"]))}
+        />
+        <Segmented
+          value={theme.layout.verticalAlign}
+          options={[
+            ["top", "Top"],
+            ["center", "Middle"],
+            ["bottom", "Bottom"],
+          ]}
+          onChange={(v) => edit((t) => void (t.layout.verticalAlign = v as Theme["layout"]["verticalAlign"]))}
+        />
+      </Row>
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+        <Check label="Shadow" checked={!!text.shadow} onChange={(on) => edit((t) => void (t.text.shadow = on ? DEFAULT_SHADOW : ""))} />
+        <Check label="Verse numbers" checked={text.verseNumbers} onChange={(on) => edit((t) => void (t.text.verseNumbers = on))} />
+        <Check label="Highlight words read" checked={!!text.readColor} onChange={(on) => edit((t) => void (t.text.readColor = on ? DEFAULT_READ : ""))} />
+        {text.readColor && <Color value={text.readColor} onChange={(v) => edit((t) => void (t.text.readColor = v))} />}
+      </div>
+    </Section>
+  );
+}
+
+function ReferenceSection({ theme, edit }: { theme: Theme; edit: Edit }) {
+  const ref = theme.reference;
+  return (
+    <Section title="Reference (e.g. JOHN 3:16)">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <Check label="Show" checked={ref.show} onChange={(on) => edit((t) => void (t.reference.show = on))} />
+        {ref.show && (
+          <Segmented
+            value={ref.position}
+            options={[
+              ["top", "Above"],
+              ["bottom", "Below"],
+            ]}
+            onChange={(v) => edit((t) => void (t.reference.position = v as Theme["reference"]["position"]))}
+          />
+        )}
+      </div>
+      {ref.show && (
+        <>
+          <Row label="Font">
+            <FontSelect value={ref.fontFamily} onChange={(v) => edit((t) => void (t.reference.fontFamily = v))} />
+            <Color value={ref.color} onChange={(v) => edit((t) => void (t.reference.color = v))} />
+          </Row>
+          <Slider label="Size" value={ref.sizePx} min={20} max={120} step={2} format={(v) => `${v}px`} onChange={(v) => edit((t) => void (t.reference.sizePx = v))} />
+          <div className="flex flex-wrap gap-x-4">
+            <Check label="Capitals" checked={ref.uppercase} onChange={(on) => edit((t) => void (t.reference.uppercase = on))} />
+            <Check label="Show translation" checked={ref.showTranslation} onChange={(on) => edit((t) => void (t.reference.showTranslation = on))} />
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
+function AdvancedJson({ theme, onUse }: { theme: Theme; onUse: (t: Theme) => void }) {
+  const [open, setOpen] = useState(false);
+  const [json, setJson] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (open) setJson(JSON.stringify(theme, null, 2));
+  }, [open, theme]);
+  return (
+    <div>
+      <button onClick={() => setOpen(!open)} className="text-xs text-zinc-500 hover:text-zinc-300">
+        {open ? "▾" : "▸"} Advanced: edit as JSON (share themes as files)
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          <textarea value={json} onChange={(e) => setJson(e.target.value)} spellCheck={false} className="h-56 w-full rounded-md bg-zinc-900 p-2 font-mono text-xs ring-1 ring-zinc-800" />
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <button
+            onClick={() => {
+              const r = parseThemeJson(json);
+              if ("error" in r) return setError(r.error);
+              setError(null);
+              onUse(r.theme);
+            }}
+            className="rounded bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700"
+          >
+            Use this JSON
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- small controls ----------
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-2">
+      <h4 className="text-xs font-semibold text-zinc-400">{title}</h4>
+      {children}
+    </section>
+  );
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="w-24 flex-none text-xs text-zinc-500">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function Slider({ label, value, min, max, step, format, onChange }: { label: string; value: number; min: number; max: number; step: number; format: (v: number) => string; onChange: (v: number) => void }) {
+  return (
+    <Row label={label}>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="min-w-0 flex-1 accent-amber-500" />
+      <span className="w-14 text-right font-mono text-xs text-zinc-400">{format(value)}</span>
+    </Row>
+  );
+}
+
+function Color({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  // <input type=color> only takes #rrggbb; anything else (from JSON) shows as white until changed.
+  const hex = /^#[0-9a-f]{6}$/i.test(value) ? value : "#ffffff";
+  return <input type="color" value={hex} onChange={(e) => onChange(e.target.value)} className="h-7 w-10 cursor-pointer rounded border border-zinc-700 bg-transparent" />;
+}
+
+function Check({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-zinc-300">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-amber-500" />
+      {label}
+    </label>
+  );
+}
+
+function Segmented({ value, options, onChange }: { value: string; options: [string, string][]; onChange: (v: string) => void }) {
+  return (
+    <div className="flex overflow-hidden rounded ring-1 ring-zinc-700">
+      {options.map(([v, l]) => (
+        <button key={v} onClick={() => onChange(v)} className={`px-2 py-0.5 text-xs ${v === value ? "bg-amber-600 text-white" : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"}`}>
+          {l}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function FontSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const known = FONTS.some((f) => f.stack === value);
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className="min-w-0 flex-1 rounded bg-zinc-800 px-2 py-1" style={{ fontFamily: value }}>
+      {!known && <option value={value}>Custom font</option>}
+      <optgroup label="Included with Hearken Studio">
+        {FONTS.filter((f) => f.bundled).map((f) => (
+          <option key={f.label} value={f.stack}>
+            {f.label}
+          </option>
+        ))}
+      </optgroup>
+      <optgroup label="On this computer">
+        {FONTS.filter((f) => !f.bundled).map((f) => (
+          <option key={f.label} value={f.stack}>
+            {f.label}
+          </option>
+        ))}
+      </optgroup>
+    </select>
+  );
+}
+
+function Tile({ selected, onClick, label, onDelete, children }: { selected: boolean; onClick: () => void; label: string; onDelete?: () => void; children: ReactNode }) {
+  return (
+    <div className="group relative">
+      <button
+        onClick={onClick}
+        title={label}
+        className={`block aspect-video w-full overflow-hidden rounded ring-2 ${selected ? "ring-amber-500" : "ring-transparent hover:ring-zinc-500"}`}
+      >
+        {children}
+      </button>
+      <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate rounded-b bg-black/55 px-1 text-[10px] text-zinc-200">{label}</span>
+      {onDelete && (
+        <button
+          onClick={onDelete}
+          aria-label={`Delete ${label}`}
+          className="absolute right-0.5 top-0.5 hidden h-5 w-5 rounded-full bg-black/70 text-xs leading-5 text-zinc-200 hover:bg-red-600 group-hover:block"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}

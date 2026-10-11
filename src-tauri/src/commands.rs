@@ -7,6 +7,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{
+    backgrounds::{self, UploadedBackground},
     asr::{
         hardware::{self, HardwareProfile},
         whisper::model_path,
@@ -473,4 +474,42 @@ mod tests {
         assert_eq!(text, "Intro: John 3:16");
         assert_eq!(state.plan.lock().refs.len(), 1);
     }
+}
+
+// ---------- uploaded backgrounds ----------
+
+#[tauri::command]
+pub fn list_backgrounds(state: State<'_, AppState>) -> Vec<UploadedBackground> {
+    backgrounds::list(&state.paths.backgrounds())
+}
+
+/// Raw image bytes as the request body; the original file name in the
+/// `x-file-name` header (URI-encoded). Raw bytes avoid a slow JSON number array.
+#[tauri::command]
+pub fn save_background(request: tauri::ipc::Request<'_>, state: State<'_, AppState>) -> CmdResult<Vec<UploadedBackground>> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the image bytes".into());
+    };
+    let name = request
+        .headers()
+        .get("x-file-name")
+        .and_then(|v| v.to_str().ok())
+        .map(crate::share::decode)
+        .unwrap_or_else(|| "image".into());
+    let dir = state.paths.backgrounds();
+    backgrounds::save(&dir, &name, bytes).map_err(|e| format!("{e:#}"))?;
+    Ok(backgrounds::list(&dir))
+}
+
+#[tauri::command]
+pub fn delete_background(file: String, state: State<'_, AppState>) -> CmdResult<Vec<UploadedBackground>> {
+    let dir = state.paths.backgrounds();
+    backgrounds::delete(&dir, &file).map_err(|e| format!("{e:#}"))?;
+    Ok(backgrounds::list(&dir))
+}
+
+/// Absolute path of an uploaded background, for the asset protocol (output window).
+#[tauri::command]
+pub fn background_path(file: String, state: State<'_, AppState>) -> Option<String> {
+    backgrounds::path(&state.paths.backgrounds(), &file)
 }

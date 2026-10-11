@@ -99,6 +99,9 @@ impl Paths {
     pub fn plan(&self) -> PathBuf {
         self.config_dir.join("sermon-plan.txt")
     }
+    pub fn backgrounds(&self) -> PathBuf {
+        self.config_dir.join("backgrounds")
+    }
 }
 
 /// The pastor's notes for this service and the references found in them.
