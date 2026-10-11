@@ -261,6 +261,8 @@ export const events = {
   detection: on<Detection>("pipeline://detection"),
   status: on<PipelineStatus>("pipeline://status"),
   pipelineError: on<string>("pipeline://error"),
+  /** Listening continues; "" clears the warning. */
+  pipelineWarning: on<string>("pipeline://warning"),
   outputState: on<OutputState>("output://state"),
   hardwareProgress: on<string>("hardware://progress"),
 };

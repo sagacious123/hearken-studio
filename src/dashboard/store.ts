@@ -113,6 +113,7 @@ export const useDashboard = create<DashboardState>((set, get) => ({
       }),
       events.status((status) => set({ status })),
       events.pipelineError((error) => set({ error, running: false })),
+      events.pipelineWarning((warning) => set({ error: warning || null })),
       events.outputState((live) => set({ live })),
       events.hardwareProgress((benchProgress) => set({ benchProgress })),
     ]);

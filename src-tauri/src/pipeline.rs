@@ -62,6 +62,15 @@ const MAX_STEP_MS: u32 = 1_500;
 const DEDUPE_WINDOW: Duration = Duration::from_secs(20);
 /// Quote matches are auto-projected only above this (explicit refs use the user threshold).
 const QUOTE_AUTO_THRESHOLD: f32 = 0.92;
+/// Real microphones always pick up some noise; this long of exact digital zeros means no audio
+/// is arriving at all (on macOS: microphone permission blocked).
+const SILENCE_WARNING_AFTER: Duration = Duration::from_secs(3);
+#[cfg(target_os = "macos")]
+const NO_AUDIO_MESSAGE: &str = "No sound is reaching Hearken Studio. If macOS blocked the microphone, allow it in \
+System Settings → Privacy & Security → Microphone, then stop and start listening. Otherwise check the input isn't muted.";
+#[cfg(not(target_os = "macos"))]
+const NO_AUDIO_MESSAGE: &str = "No sound is reaching Hearken Studio. Check the input device isn't muted and that \
+microphone access is allowed in the system privacy settings, then stop and start listening.";
 /// Confidence added when a detection is in the pastor's sermon plan.
 const PLAN_BOOST: f32 = 0.08;
 /// Songs go up automatically only above this, and only onto a clear screen or over another song.
@@ -248,6 +257,9 @@ fn dsp_loop(
     let mut pcm: Vec<f32> = Vec::with_capacity(SAMPLE_RATE);
     let mut since_partial = 0usize;
     let mut last_status = Instant::now();
+    let started = Instant::now();
+    let mut heard_signal = false;
+    let mut warned_silent = false;
     let send = |job: Job| jobs.send(job).context("ASR thread is gone");
 
     while !stop.load(Relaxed) {
@@ -257,6 +269,16 @@ fn dsp_loop(
             continue;
         }
         let captured_at = Instant::now();
+        if !heard_signal && raw[..n].iter().any(|s| *s != 0.0) {
+            heard_signal = true;
+            if warned_silent {
+                let _ = app.emit(events::WARNING, "");
+            }
+        }
+        if !heard_signal && !warned_silent && started.elapsed() >= SILENCE_WARNING_AFTER {
+            warned_silent = true;
+            let _ = app.emit(events::WARNING, NO_AUDIO_MESSAGE);
+        }
         resampler.process(&raw[..n], &mut pcm)?;
 
         let mut offset = 0;

@@ -18,6 +18,8 @@ pub mod events {
     pub const DETECTION: &str = "pipeline://detection";
     pub const STATUS: &str = "pipeline://status";
     pub const ERROR: &str = "pipeline://error";
+    /// Listening continues, but the operator should know (e.g. no audio arriving). "" clears it.
+    pub const WARNING: &str = "pipeline://warning";
     pub const OUTPUT_STATE: &str = "output://state";
     pub const HARDWARE_PROGRESS: &str = "hardware://progress";
 }
