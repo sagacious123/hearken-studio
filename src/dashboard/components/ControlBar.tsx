@@ -9,8 +9,10 @@ export function ControlBar() {
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
   const [monitor, setMonitor] = useState<number | null>(null);
 
+  // Re-listed whenever the menu is opened, so a mic or interface plugged in later shows up.
+  const refreshDevices = () => void api.listAudioDevices().then(setDevices).catch(console.error);
   useEffect(() => {
-    api.listAudioDevices().then(setDevices).catch(console.error);
+    refreshDevices();
     api.listMonitors().then(setMonitors).catch(console.error);
   }, []);
 
@@ -32,6 +34,8 @@ export function ControlBar() {
       <Field label="Input">
         <select
           disabled={s.running}
+          onFocus={refreshDevices}
+          onMouseDown={refreshDevices}
           value={settings.inputDevice ?? ""}
           onChange={(e) => s.saveSettings({ inputDevice: e.target.value || null })}
           className="max-w-56 rounded bg-zinc-800 px-2 py-1"
