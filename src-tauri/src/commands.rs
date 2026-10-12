@@ -19,6 +19,7 @@ use crate::{
         accuracy::{self, AccuracyProfile, Calibration},
         hardware::{self, HardwareProfile},
         models::{self, ModelStatus},
+        priority,
         whisper::{WhisperEngine, GPU_BACKEND},
     },
     audio::capture::{self, DeviceInfo},
@@ -137,7 +138,7 @@ pub async fn start_pipeline(app: AppHandle, state: State<'_, AppState>) -> CmdRe
         model_path: path,
         model_name: id.to_owned(),
         use_gpu,
-        threads: profile.threads,
+        threads: priority::accuracy_threads(use_gpu, profile.threads),
         calibration,
         forced,
         calibration_file: state.paths.accuracy_profile(),
@@ -200,15 +201,23 @@ fn choose_accuracy_model(
     }
 }
 
-/// Time a downloaded model on this computer and save the result (blocking).
-fn calibrate_now(state: &AppState, id: &str, use_gpu: bool, threads: usize) -> Result<Calibration, String> {
+/// Time a downloaded model on this computer and save the result (blocking). Runs exactly as
+/// the accuracy pass will: same thread count, low priority.
+fn calibrate_now(state: &AppState, id: &str, use_gpu: bool, live_threads: usize) -> Result<Calibration, String> {
     let dirs = model_dirs(state);
     let path = models::find(&[dirs[0].as_path(), dirs[1].as_path()], id).ok_or("model not installed")?;
-    let mut engine = WhisperEngine::load_with_fallback(&path, use_gpu, threads).map_err(|e| format!("{e:#}"))?;
     let audio = hardware::load_wav(&state.paths.bench_wav).map_err(|e| format!("{e:#}"))?;
-    let books: Vec<&str> = scripture::books::BOOKS.iter().map(|b| b.display).collect();
-    let prompt = crate::asr::whisper::accurate_prompt("", &[], &books);
-    let cal = accuracy::calibrate(&mut engine, id, &audio, &prompt).map_err(|e| format!("{e:#}"))?;
+    let threads = priority::accuracy_threads(use_gpu, live_threads);
+    let model = id.to_owned();
+    let cal = std::thread::spawn(move || {
+        priority::background();
+        let mut engine = WhisperEngine::load_with_fallback(&path, use_gpu, threads).map_err(|e| format!("{e:#}"))?;
+        let books: Vec<&str> = scripture::books::BOOKS.iter().map(|b| b.display).collect();
+        let prompt = crate::asr::whisper::accurate_prompt("", &[], &books);
+        accuracy::calibrate(&mut engine, &model, &audio, &prompt).map_err(|e| format!("{e:#}"))
+    })
+    .join()
+    .map_err(|_| "speed test crashed".to_string())??;
     AccuracyProfile::record(&state.paths.accuracy_profile(), env!("CARGO_PKG_VERSION"), cal.clone());
     Ok(cal)
 }

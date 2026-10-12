@@ -1559,6 +1559,7 @@ dependencies = [
  "crossbeam-channel",
  "env_logger",
  "hound",
+ "libc",
  "log",
  "parking_lot",
  "qrcode",

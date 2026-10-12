@@ -77,6 +77,14 @@ export function AccuracyButton() {
             </p>
           </div>
 
+          {!gpu && (
+            <p className="rounded-md bg-zinc-950 p-2 text-xs text-zinc-400 ring-1 ring-zinc-800">
+              This computer has no graphics chip the models can use, so the accuracy pass runs gently in the background (one
+              low-priority thread) to keep live detection fast. It still adds roughly 0.1–0.2 s to detections; choose <b>Off</b> for
+              the fastest possible detection.
+            </p>
+          )}
+
           <fieldset className="space-y-1.5">
             <legend className="mb-1 text-xs font-semibold text-zinc-400">Accuracy pass</legend>
             <Choice value="auto" current={choice} onPick={(v) => saveSettings({ accuracyModel: v })}>

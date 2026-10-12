@@ -37,6 +37,7 @@ use crate::{
     asr::{
         accuracy::{self, AccuracyProfile, Calibration},
         hardware::{self, PARTIAL_WINDOW_MS},
+        priority,
         whisper::{self, DecodeOptions, WhisperEngine},
     },
     audio::{
@@ -234,6 +235,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
             let (app, v11n, bible_path, dedupe) = (app.clone(), v11n.clone(), cfg.bible_path.clone(), dedupe.clone());
             let name = rc.model_name.clone();
             let handle = thread::Builder::new().name("asr-refine".into()).spawn(move || {
+                priority::background();
                 let engine = WhisperEngine::load_with_fallback(&rc.model_path, rc.use_gpu, rc.threads);
                 let bible = BibleDb::open(&bible_path);
                 let (mut engine, bible) = match (engine, bible) {
@@ -287,6 +289,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
         let (model_path, use_gpu, threads, reduced_ctx, bible_path, base_step) =
             (cfg.model_path.clone(), cfg.use_gpu, cfg.threads, cfg.reduced_ctx, cfg.bible_path.clone(), cfg.step_ms);
         thread::Builder::new().name("asr".into()).spawn(move || {
+            priority::interactive();
             let engine = WhisperEngine::load_with_fallback(&model_path, use_gpu, threads);
             let bible = BibleDb::open(&bible_path);
             let (mut engine, bible) = match (engine, bible) {
@@ -335,6 +338,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
         let (app, stop, step_ms, infer_ewma) = (app.clone(), stop.clone(), step_ms.clone(), infer_ewma.clone());
         let rate = capture.sample_rate;
         thread::Builder::new().name("dsp".into()).spawn(move || {
+            priority::interactive();
             if let Err(e) = dsp_loop(consumer, rate, job_tx, &stop, &step_ms, &infer_ewma, &app) {
                 log::error!("dsp thread failed: {e:#}");
                 let _ = app.emit(events::ERROR, format!("{e:#}"));
