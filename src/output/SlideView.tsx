@@ -81,7 +81,7 @@ export const SlideView = memo(function SlideView({ slide, theme, blackout, readi
           <div dangerouslySetInnerHTML={{ __html: qr.svg }} />
           <div>
             Follow along on your phone
-            <small>{qr.url}</small>
+            <small>{qr.url.replace(/^https?:\/\//, "")}</small>
           </div>
         </div>
       )}

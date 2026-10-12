@@ -7,8 +7,26 @@ import { useDismiss } from "../useDismiss";
  * Local-network sharing: congregation phones (QR code), a livestream overlay for OBS/vMix,
  * and a phone remote for the operator. Works without internet on the church Wi-Fi.
  */
+/** Same rules as the Rust side: letters, digits and hyphens ("Grace Chapel" → "grace-chapel"). */
+const cleanName = (raw: string) =>
+  raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/, "") || "hearken";
+
+const NAME_STATUS = {
+  checking: { tone: "text-zinc-400", text: () => "Checking the name on the network…" },
+  announced: { tone: "text-emerald-400", text: (url: string) => `✓ Phones on this Wi-Fi can open ${url.replace("http://", "")}` },
+  conflict: { tone: "text-amber-400", text: (url: string) => `Another device on this network already uses ${url.replace("http://", "")}. Choose a different name.` },
+  failed: { tone: "text-amber-400", text: () => "Couldn't announce the name; phones can use the number address below." },
+} as const;
+
 export function ShareButton() {
   const enabled = useDashboard((s) => s.settings?.shareEnabled ?? false);
+  const savedName = useDashboard((s) => s.settings?.shareName ?? "hearken");
   const qrLive = useDashboard((s) => !!s.live?.qr);
   const saveSettings = useDashboard((s) => s.saveSettings);
   const [open, setOpen] = useState(false);
@@ -16,9 +34,24 @@ export function ShareButton() {
   const [info, setInfo] = useState<ShareInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [name, setName] = useState(savedName);
+  useEffect(() => setName(savedName), [savedName]);
+
   useEffect(() => {
     if (open) api.getShareInfo().then(setInfo).catch((e) => setError(String(e)));
-  }, [open, enabled]);
+  }, [open, enabled, savedName]);
+  // The name is checked on the network for a second or two after sharing starts.
+  useEffect(() => {
+    if (!open || info?.nameStatus !== "checking" || !info.enabled) return;
+    const id = setTimeout(() => void api.getShareInfo().then(setInfo).catch(() => {}), 700);
+    return () => clearTimeout(id);
+  }, [open, info]);
+
+  const saveName = () => {
+    const clean = cleanName(name);
+    setName(clean);
+    if (clean !== savedName) void saveSettings({ shareName: clean }).catch((e) => setError(String(e)));
+  };
 
   const toggle = async () => {
     setError(null);
@@ -49,6 +82,26 @@ export function ShareButton() {
           </label>
           {(error || info?.error) && <p className="text-xs text-red-400">{error ?? info?.error}</p>}
 
+          <label className="block space-y-1">
+            <span className="text-xs text-zinc-400">Network name</span>
+            <span className="flex items-center rounded-md bg-zinc-950 ring-1 ring-zinc-800 focus-within:ring-sky-600">
+              <span className="pl-2 text-zinc-500">http://</span>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onBlur={saveName}
+                onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
+                spellCheck={false}
+                aria-label="Network name"
+                className="min-w-0 flex-1 bg-transparent px-0.5 py-1.5 font-mono text-sm text-zinc-100 outline-none"
+              />
+              <span className="pr-2 font-mono text-zinc-500">.local</span>
+            </span>
+            {info?.enabled && (
+              <span className={`block text-xs ${NAME_STATUS[info.nameStatus].tone}`}>{NAME_STATUS[info.nameStatus].text(info.phoneUrl)}</span>
+            )}
+          </label>
+
           {info?.enabled && (
             <>
               <div className="flex gap-3">
@@ -66,6 +119,10 @@ export function ShareButton() {
               <Link label="Phones" url={info.phoneUrl} />
               <Link label="Livestream overlay" url={info.overlayUrl} hint="OBS/vMix: add a Browser source, 1920×1080. Add ?pos=top to move it up." />
               <Link label="Remote" url={info.remoteUrl} hint={`Open on your phone and enter PIN ${info.pin}.`} />
+              <div className="rounded-md bg-zinc-950 p-2 text-xs text-zinc-400 ring-1 ring-zinc-800">
+                Some Android phones can't open <span className="font-mono">.local</span> addresses. They can use{" "}
+                <span className="select-all font-mono text-sky-300">{info.ipUrl}</span> instead; the QR code always works.
+              </div>
               <p className="text-xs text-zinc-500">Devices must be on the same Wi-Fi. If they can't connect, allow Hearken Studio in the computer's firewall.</p>
             </>
           )}
@@ -81,7 +138,9 @@ function Link({ label, url, hint }: { label: string; url: string; hint?: string 
     <div>
       <div className="flex items-center gap-2">
         <span className="w-20 flex-none text-xs text-zinc-400">{label}</span>
-        <code className="min-w-0 flex-1 truncate rounded bg-zinc-950 px-1.5 py-0.5 text-xs text-sky-300">{url}</code>
+        <code className="min-w-0 flex-1 truncate rounded bg-zinc-950 px-1.5 py-0.5 text-xs text-sky-300" title={url}>
+          {url.replace(/^https?:\/\//, "")}
+        </code>
         <button
           onClick={() => {
             void navigator.clipboard.writeText(url).then(() => {

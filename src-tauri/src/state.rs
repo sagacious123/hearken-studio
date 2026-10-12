@@ -47,7 +47,10 @@ pub struct Settings {
     pub lyrics_detection: bool,
     /// Serve the phone view, OBS overlay and phone remote on the local network.
     pub share_enabled: bool,
+    /// Fallback port when 80 isn't available.
     pub share_port: u16,
+    /// Friendly network name: phones open http://<name>.local.
+    pub share_name: String,
     /// Heading on sermon recaps.
     pub church_name: String,
     /// Accuracy pass: "auto", "off", or a model id ("small.en", "large-v3-turbo").
@@ -72,6 +75,7 @@ impl Default for Settings {
             lyrics_detection: true,
             share_enabled: false,
             share_port: 7878,
+            share_name: "hearken".into(),
             church_name: String::new(),
             accuracy_model: "auto".into(),
             vocabulary: String::new(),

@@ -41,6 +41,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 
 # Local network sharing: phone view, OBS overlay, phone remote
 tiny_http = "0.12"
+mdns-sd = "0.21"   # announce a friendly name (hearken.local) on the church network
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 # Model downloads (accuracy-pass models aren't bundled): blocking HTTPS + checksum

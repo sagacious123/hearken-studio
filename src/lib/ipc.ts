@@ -108,7 +108,10 @@ export interface Settings {
   followReading: boolean;
   lyricsDetection: boolean;
   shareEnabled: boolean;
+  /** Fallback port when 80 isn't available. */
   sharePort: number;
+  /** Friendly network name: phones open http://<name>.local. */
+  shareName: string;
   churchName: string;
   /** "auto" | "off" | a model id. */
   accuracyModel: string;
@@ -201,9 +204,14 @@ export interface UploadedBackground {
 export interface ShareInfo {
   enabled: boolean;
   port: number;
+  /** Friendly addresses (http://hearken.local …). */
   phoneUrl: string;
   overlayUrl: string;
   remoteUrl: string;
+  /** Same pages by IP address, for devices that can't open ".local" names. */
+  ipUrl: string;
+  name: string;
+  nameStatus: "checking" | "announced" | "conflict" | "failed";
   pin: string;
   qrSvg: string;
   /** Why sharing isn't running although it's switched on (e.g. port in use). */

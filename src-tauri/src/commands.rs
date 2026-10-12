@@ -59,12 +59,12 @@ pub async fn update_settings(settings: Settings, app: AppHandle, state: State<'_
 
 /// Start or stop the local-network server to match the settings.
 pub fn apply_sharing(app: &AppHandle, state: &AppState) -> CmdResult<()> {
-    let (enabled, port) = {
+    let (enabled, port, name) = {
         let s = state.settings.lock();
-        (s.share_enabled, s.share_port)
+        (s.share_enabled, s.share_port, s.share_name.clone())
     };
     if enabled {
-        state.share.start(app.clone(), port, state.paths.bible_db.clone()).map_err(err)
+        state.share.start(app.clone(), port, &name, state.paths.bible_db.clone()).map_err(err)
     } else {
         state.share.stop();
         if state.presenter.snapshot().qr.is_some() {
@@ -505,8 +505,11 @@ pub async fn close_output_window(app: AppHandle) -> CmdResult<()> {
 
 #[tauri::command]
 pub async fn get_share_info(state: State<'_, AppState>) -> CmdResult<ShareInfo> {
-    let port = state.settings.lock().share_port;
-    Ok(state.share.info(port))
+    let (port, name) = {
+        let s = state.settings.lock();
+        (s.share_port, s.share_name.clone())
+    };
+    Ok(state.share.info(port, &name))
 }
 
 /// Show the "follow on your phone" QR code on the projector.
@@ -515,7 +518,11 @@ pub async fn show_qr(on: bool, app: AppHandle, state: State<'_, AppState>) -> Cm
     if on && !state.settings.lock().share_enabled {
         return Err("turn on sharing first".into());
     }
-    let qr = on.then(|| state.share.qr_overlay(state.settings.lock().share_port));
+    let (port, name) = {
+        let s = state.settings.lock();
+        (s.share_port, s.share_name.clone())
+    };
+    let qr = on.then(|| state.share.qr_overlay(port, &name));
     state.presenter.set_qr(&app, qr);
     Ok(())
 }

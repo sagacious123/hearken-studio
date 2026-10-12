@@ -2,7 +2,9 @@
 //!   /         congregation phones follow the live verse, in any translation and text size
 //!   /overlay  transparent lower third for OBS / vMix browser sources (livestream)
 //!   /remote   drive the output from a phone (needs the PIN shown in the dashboard)
-//! Plain HTTP on the church network, served from a small blocking server thread.
+//! Plain HTTP on the church network, served from a small blocking server thread, on port 80
+//! when the system allows (so addresses need no ":7878") and under a friendly name announced
+//! with mDNS: http://hearken.local. The IP address stays available as a fallback.
 
 use std::{
     collections::HashMap,
@@ -20,6 +22,11 @@ use serde_json::json;
 use tauri::{AppHandle, Manager};
 use tiny_http::{Header, Method, Request, Response, Server};
 
+mod announce;
+
+pub use announce::clean_name;
+use announce::{Announcement, NameStatus};
+
 use crate::{
     commands,
     presentation::QrOverlay,
@@ -31,10 +38,20 @@ const PHONE_HTML: &str = include_str!("share/phone.html");
 const OVERLAY_HTML: &str = include_str!("share/overlay.html");
 const REMOTE_HTML: &str = include_str!("share/remote.html");
 
+/// Tried first: browsers don't show the default port, so addresses read "http://hearken.local".
+const FRIENDLY_PORT: u16 = 80;
+
 struct Running {
     server: Arc<Server>,
     thread: Option<JoinHandle<()>>,
+    /// Port actually serving, and the one asked for (the fallback when 80 is unavailable).
     port: u16,
+    preferred_port: u16,
+    name: String,
+    ip: Ipv4Addr,
+    /// Friendly-name announcement; dropped (and the name withdrawn) with the server.
+    announce: Option<Announcement>,
+    announce_error: Option<String>,
 }
 
 pub struct Share {
@@ -49,13 +66,28 @@ pub struct Share {
 pub struct ShareInfo {
     pub enabled: bool,
     pub port: u16,
+    /// Friendly addresses: http://hearken.local, …/overlay, …/remote.
     pub phone_url: String,
     pub overlay_url: String,
     pub remote_url: String,
+    /// The same pages by IP address, for devices that can't resolve ".local" names.
+    pub ip_url: String,
+    pub name: String,
+    /// "checking" | "announced" | "conflict" | "failed"
+    pub name_status: &'static str,
     pub pin: String,
-    /// QR code for `phone_url`.
+    /// QR code for the phone page. Encodes the IP address, which every phone can open.
     pub qr_svg: String,
     pub error: Option<String>,
+}
+
+/// "http://hearken.local" or "http://hearken.local:7878" (and the same for an IP address).
+fn base_url(host: &str, port: u16) -> String {
+    if port == 80 {
+        format!("http://{host}")
+    } else {
+        format!("http://{host}:{port}")
+    }
 }
 
 impl Default for Share {
@@ -71,24 +103,41 @@ impl Share {
         Self { running: Mutex::new(None), error: Mutex::new(None), pin: format!("{:04}", h.finish() % 10_000) }
     }
 
-    /// Start (or move to `port`). Failures are kept for `info()` as well as returned.
-    pub fn start(&self, app: AppHandle, port: u16, bible_path: PathBuf) -> Result<()> {
-        let result = self.try_start(app, port, bible_path);
+    /// Start (or restart with a new name or port). Failures are kept for `info()` as well as
+    /// returned.
+    pub fn start(&self, app: AppHandle, preferred_port: u16, name: &str, bible_path: PathBuf) -> Result<()> {
+        let result = self.try_start(app, preferred_port, &clean_name(name), bible_path);
         *self.error.lock() = result.as_ref().err().map(|e| format!("{e:#}"));
         result
     }
 
-    fn try_start(&self, app: AppHandle, port: u16, bible_path: PathBuf) -> Result<()> {
+    fn try_start(&self, app: AppHandle, preferred_port: u16, name: &str, bible_path: PathBuf) -> Result<()> {
         let mut running = self.running.lock();
-        if running.as_ref().is_some_and(|r| r.port == port) {
+        if running.as_ref().is_some_and(|r| r.preferred_port == preferred_port && r.name == name) {
             return Ok(());
         }
         if let Some(r) = running.take() {
             stop(r);
         }
-        let server = Arc::new(
-            Server::http(("0.0.0.0", port)).map_err(|e| anyhow!("couldn't start sharing on port {port} ({e}). Is another app using it?"))?,
-        );
+        // Port 80 first (no ":port" in addresses). macOS and Windows allow it without admin
+        // rights; Linux usually doesn't, and something else may be using it.
+        let (server, port) = match Server::http(("0.0.0.0", FRIENDLY_PORT)) {
+            Ok(s) => (s, FRIENDLY_PORT),
+            Err(_) => (
+                Server::http(("0.0.0.0", preferred_port))
+                    .map_err(|e| anyhow!("couldn't start sharing on port {preferred_port} ({e}). Is another app using it?"))?,
+                preferred_port,
+            ),
+        };
+        let server = Arc::new(server);
+        let ip = local_ipv4();
+        let (announce, announce_error) = match Announcement::start(name, ip, port) {
+            Ok(a) => (Some(a), None),
+            Err(e) => {
+                log::warn!("couldn't announce {name}.local: {e:#}");
+                (None, Some(format!("{e:#}")))
+            }
+        };
         let pin = self.pin.clone();
         let srv = server.clone();
         let thread = std::thread::Builder::new().name("share".into()).spawn(move || {
@@ -98,8 +147,8 @@ impl Share {
                 handle(&app, bible.as_ref(), &pin, req);
             }
         })?;
-        *running = Some(Running { server, thread: Some(thread), port });
-        log::info!("sharing on port {port}");
+        log::info!("sharing at {} ({})", base_url(&format!("{name}.local"), port), base_url(&ip.to_string(), port));
+        *running = Some(Running { server, thread: Some(thread), port, preferred_port, name: name.to_owned(), ip, announce, announce_error });
         Ok(())
     }
 
@@ -110,25 +159,48 @@ impl Share {
         }
     }
 
-    pub fn info(&self, port: u16) -> ShareInfo {
-        let enabled = self.running.lock().is_some();
-        let base = format!("http://{}:{port}", local_ip());
-        let phone_url = format!("{base}/");
+    /// Addresses for the Share panel. When not running, shows what they will be.
+    pub fn info(&self, preferred_port: u16, name: &str) -> ShareInfo {
+        let running = self.running.lock();
+        let (enabled, port, name, ip, name_status) = match running.as_ref() {
+            Some(r) => {
+                let status = match &r.announce {
+                    Some(a) => match a.status() {
+                        NameStatus::Checking => "checking",
+                        NameStatus::Announced => "announced",
+                        NameStatus::Conflict => "conflict",
+                        NameStatus::Failed => "failed",
+                    },
+                    None => "failed",
+                };
+                (true, r.port, r.name.clone(), r.ip, status)
+            }
+            None => (false, preferred_port, clean_name(name), local_ipv4(), "checking"),
+        };
+        let friendly = base_url(&format!("{name}.local"), port);
+        let ip_url = base_url(&ip.to_string(), port);
+        let error = self.error.lock().clone().or_else(|| running.as_ref().and_then(|r| r.announce_error.clone()));
         ShareInfo {
             enabled,
             port,
-            qr_svg: qr_svg(&phone_url),
-            overlay_url: format!("{base}/overlay"),
-            remote_url: format!("{base}/remote"),
-            phone_url,
+            qr_svg: qr_svg(&format!("{ip_url}/")),
+            overlay_url: format!("{friendly}/overlay"),
+            remote_url: format!("{friendly}/remote"),
+            phone_url: friendly,
+            ip_url,
+            name,
+            name_status,
             pin: self.pin.clone(),
-            error: self.error.lock().clone(),
+            error,
         }
     }
 
-    pub fn qr_overlay(&self, port: u16) -> QrOverlay {
-        let info = self.info(port);
-        QrOverlay { svg: info.qr_svg, url: info.phone_url }
+    /// The projector's "follow on your phone" box: the QR opens the IP address (works on every
+    /// phone); the text shows the friendly address for anyone typing it.
+    pub fn qr_overlay(&self, preferred_port: u16, name: &str) -> QrOverlay {
+        let info = self.info(preferred_port, name);
+        let url = if matches!(info.name_status, "conflict" | "failed") { info.ip_url } else { info.phone_url };
+        QrOverlay { svg: info.qr_svg, url }
     }
 }
 
@@ -141,14 +213,16 @@ fn stop(mut r: Running) {
 
 /// The address phones on the same network can reach. Connecting a UDP socket sends nothing;
 /// it only asks the OS which interface routes to the LAN.
-fn local_ip() -> IpAddr {
+fn local_ipv4() -> Ipv4Addr {
     UdpSocket::bind("0.0.0.0:0")
         .and_then(|s| s.connect("10.255.255.255:1").map(|_| s))
         .and_then(|s| s.local_addr())
-        .map(|a| a.ip())
         .ok()
-        .filter(|ip| !ip.is_unspecified())
-        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        .and_then(|a| match a.ip() {
+            IpAddr::V4(v4) if !v4.is_unspecified() => Some(v4),
+            _ => None,
+        })
+        .unwrap_or(Ipv4Addr::LOCALHOST)
 }
 
 fn qr_svg(text: &str) -> String {
@@ -322,3 +396,5 @@ mod tests {
         assert!(qr_svg("http://192.168.1.20:7878/").starts_with("<?xml"));
     }
 }
+
+
