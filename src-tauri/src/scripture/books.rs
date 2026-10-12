@@ -156,3 +156,4 @@ pub fn all_aliases() -> Vec<(String, u8, bool)> {
     }
     out
 }
+

@@ -384,6 +384,35 @@ pub async fn search_scripture(query: String, translation: String, state: State<'
     Ok(SearchResponse { reference, hits, elapsed_ms: t0.elapsed().as_secs_f32() * 1000.0 })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookInfo {
+    id: u8,
+    name: &'static str,
+    /// Lowercase names people type: "jn", "1 cor", "first corinthians", "psalm".
+    aliases: Vec<String>,
+    /// Verses in each chapter (index 0 = chapter 1), from the reference translation.
+    verses: Vec<u16>,
+}
+
+/// The 66 books with their chapter and verse counts, for the passage picker.
+#[tauri::command]
+pub async fn list_books(state: State<'_, AppState>) -> CmdResult<Vec<BookInfo>> {
+    let mut aliases: std::collections::HashMap<u8, Vec<String>> = Default::default();
+    for (alias, id, _) in scripture::books::all_aliases() {
+        aliases.entry(id).or_default().push(alias);
+    }
+    Ok(scripture::books::BOOKS
+        .iter()
+        .map(|b| BookInfo {
+            id: b.id,
+            name: b.display,
+            aliases: aliases.remove(&b.id).unwrap_or_default(),
+            verses: (1..=b.chapters).map(|c| state.versification.max_verse(b.id, c).unwrap_or(0)).collect(),
+        })
+        .collect())
+}
+
 /// Re-resolve a reference (e.g. in another translation).
 #[tauri::command]
 pub async fn build_slide(reference: ScriptureRef, translation: String, state: State<'_, AppState>) -> CmdResult<Option<Slide>> {

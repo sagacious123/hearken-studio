@@ -66,6 +66,7 @@ pub fn run() {
             commands::list_translations,
             commands::search_scripture,
             commands::build_slide,
+            commands::list_books,
             commands::get_output_state,
             commands::present,
             commands::clear_output,

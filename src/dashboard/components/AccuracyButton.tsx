@@ -64,7 +64,7 @@ export function AccuracyButton() {
         Accuracy{downloading.length ? " ↓" : ""}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-2 w-[26rem] space-y-4 rounded-lg bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700">
+        <div className="absolute right-0 top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[26rem] space-y-4 overflow-y-auto overscroll-contain rounded-lg bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700">
           <div>
             <h3 className="font-semibold">Transcription accuracy</h3>
             <p className="mt-1 text-xs text-zinc-400">

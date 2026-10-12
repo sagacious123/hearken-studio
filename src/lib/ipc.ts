@@ -176,6 +176,15 @@ export interface Translation {
   name: string;
 }
 
+export interface BookInfo {
+  id: number;
+  name: string;
+  /** Lowercase names people type: "jn", "1 cor", "psalm". */
+  aliases: string[];
+  /** Verses per chapter (index 0 = chapter 1). */
+  verses: number[];
+}
+
 export interface SearchResponse {
   reference: Slide | null;
   hits: Slide[];
@@ -253,6 +262,7 @@ export const api = {
   listTranslations: () => invoke<Translation[]>("list_translations"),
   searchScripture: (query: string, translation: string) =>
     invoke<SearchResponse>("search_scripture", { query, translation }),
+  listBooks: () => invoke<BookInfo[]>("list_books"),
   buildSlide: (reference: ScriptureRef, translation: string) =>
     invoke<Slide | null>("build_slide", { reference, translation }),
   getOutputState: () => invoke<OutputState>("get_output_state"),

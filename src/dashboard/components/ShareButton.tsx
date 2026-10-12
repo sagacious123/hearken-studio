@@ -37,7 +37,7 @@ export function ShareButton() {
         Share{enabled ? " ●" : ""}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-2 w-[22rem] space-y-3 rounded-lg bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700">
+        <div className="absolute right-0 top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[22rem] space-y-3 overflow-y-auto overscroll-contain rounded-lg bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700">
           <label className="flex items-center justify-between gap-3">
             <span>
               <span className="font-semibold">Share on the local network</span>

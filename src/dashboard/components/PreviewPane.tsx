@@ -4,6 +4,7 @@ import { parseTheme } from "../../lib/theme";
 import { SlideView } from "../../output/SlideView";
 import { Stage } from "../../output/Stage";
 import { useDashboard } from "../store";
+import { PassagePicker } from "./PassagePicker";
 import { DraftBar } from "./StylePanel";
 import { PanelHeader } from "./TranscriptPanel";
 
@@ -19,6 +20,7 @@ export function PreviewPane() {
   return (
     <section className="flex min-h-0 flex-col overflow-y-auto bg-zinc-950">
       <SearchBox />
+      <PassagePicker />
 
       <PanelHeader title="Preview">
         <button
@@ -86,7 +88,7 @@ function SearchBox() {
   const items: Slide[] = result ? [...(result.reference ? [result.reference] : []), ...result.hits] : [];
 
   return (
-    <div className="relative flex-none border-b border-zinc-800 p-3">
+    <div className="relative flex-none p-3 pb-2">
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
