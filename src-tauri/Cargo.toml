@@ -1,6 +1,6 @@
 [package]
 name = "hearken-studio"
-version = "0.1.1"
+version = "0.1.2"
 description = "Offline, real-time scripture detection and projection"
 edition = "2021"
 rust-version = "1.80"
