@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { api, type BookInfo, type Slide } from "../../lib/ipc";
 import { useDashboard } from "../store";
 
@@ -11,6 +11,30 @@ const norm = (s: string) =>
     .replace(/^([123])(?=[a-z])/, "$1 ") // "1cor" → "1 cor"
     .replace(/\s+/g, " ")
     .trim();
+
+/**
+ * Select a field's whole value when it gains focus, so typing replaces it. A click focuses on
+ * mouse-down and the following mouse-up would collapse the selection, so that one is cancelled.
+ */
+function useSelectOnFocus() {
+  const justFocused = useRef(false);
+  return {
+    onFocus: (e: FocusEvent<HTMLInputElement>) => {
+      e.currentTarget.select();
+      justFocused.current = true;
+    },
+    onMouseUp: (e: MouseEvent<HTMLInputElement>) => {
+      if (justFocused.current) e.preventDefault();
+      justFocused.current = false;
+    },
+    onBlur: () => {
+      justFocused.current = false;
+    },
+  };
+}
+
+/** Focus (and select) a field after React has rendered, e.g. once it's no longer disabled. */
+const focusSoon = (el: HTMLInputElement | null) => requestAnimationFrame(() => el?.focus());
 
 /** Books matching what's typed: name or alias prefix first, then anywhere, in Bible order. */
 function filterBooks(books: BookInfo[], query: string): BookInfo[] {
@@ -39,6 +63,7 @@ export function PassagePicker() {
   const [chapter, setChapter] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const selectOnFocus = useSelectOnFocus();
   const chapterRef = useRef<HTMLInputElement>(null);
   const fromRef = useRef<HTMLInputElement>(null);
   const toRef = useRef<HTMLInputElement>(null);
@@ -73,11 +98,15 @@ export function PassagePicker() {
     return api.buildSlide({ bookId: book.id, chapter: ch, verseStart, verseEnd }, translation);
   };
 
-  // Preview follows what's typed (debounced), so the operator sees the passage before sending it.
+  // Preview follows every keystroke immediately (a passage lookup takes well under a
+  // millisecond); a reply that arrives after a newer keystroke is ignored.
+  const latest = useRef(0);
   useEffect(() => {
     if (!ready) return;
-    const id = setTimeout(() => void build().then((s) => s && setPreview(s)), 150);
-    return () => clearTimeout(id);
+    const request = ++latest.current;
+    void build().then((s) => {
+      if (s && request === latest.current) setPreview(s);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, book?.id, chapter, from, to, translation]);
 
@@ -110,14 +139,15 @@ export function PassagePicker() {
             if (b.verses.length < Number(chapter)) setChapter("");
             setFrom("");
             setTo("");
-            chapterRef.current?.focus();
+            focusSoon(chapterRef.current); // it was disabled until this book was set
           }}
         />
         <input
           ref={chapterRef}
           value={chapter}
           onChange={(e) => setChapter(e.target.value.replace(/\D/g, ""))}
-          onKeyDown={(e) => onEnter(e, from ? undefined : () => fromRef.current?.focus())}
+          onKeyDown={(e) => onEnter(e, from ? undefined : () => focusSoon(fromRef.current))}
+          {...selectOnFocus}
           inputMode="numeric"
           placeholder="Ch."
           aria-label="Chapter"
@@ -131,6 +161,7 @@ export function PassagePicker() {
           value={from}
           onChange={(e) => setFrom(e.target.value.replace(/\D/g, ""))}
           onKeyDown={(e) => onEnter(e)}
+          {...selectOnFocus}
           inputMode="numeric"
           placeholder="V."
           aria-label="First verse"
@@ -144,6 +175,7 @@ export function PassagePicker() {
           value={to}
           onChange={(e) => setTo(e.target.value.replace(/\D/g, ""))}
           onKeyDown={(e) => onEnter(e)}
+          {...selectOnFocus}
           inputMode="numeric"
           placeholder="to"
           aria-label="Last verse (optional)"
