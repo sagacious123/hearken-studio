@@ -16,8 +16,12 @@ export function TranscriptPanel() {
     <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3 text-[15px] leading-relaxed">
       {finals.length === 0 && !partial && <p className="text-zinc-500">Waiting for speech…</p>}
       {finals.map((l) => (
-        <p key={l.utteranceId} title={`ASR confidence ${(l.confidence * 100).toFixed(0)}% · ${l.inferenceMs.toFixed(0)} ms`}>
+        <p
+          key={l.utteranceId}
+          title={`${l.refined ? "Checked by the accuracy pass" : "Quick transcription"} · confidence ${(l.confidence * 100).toFixed(0)}% · ${(l.inferenceMs / 1000).toFixed(1)} s`}
+        >
           <span className={l.confidence < 0.6 ? "text-zinc-400" : "text-zinc-100"}>{l.text}</span>
+          {l.refined && <span className="ml-1.5 align-middle text-[10px] text-emerald-500" aria-label="checked">✓</span>}
         </p>
       ))}
       {partial && <p className="italic text-zinc-500">{partial.text}</p>}

@@ -50,6 +50,10 @@ pub struct Settings {
     pub share_port: u16,
     /// Heading on sermon recaps.
     pub church_name: String,
+    /// Accuracy pass: "auto", "off", or a model id ("small.en", "large-v3-turbo").
+    pub accuracy_model: String,
+    /// Names and words to listen for (pastors, the church, places), comma or line separated.
+    pub vocabulary: String,
 }
 
 impl Default for Settings {
@@ -69,6 +73,8 @@ impl Default for Settings {
             share_enabled: false,
             share_port: 7878,
             church_name: String::new(),
+            accuracy_model: "auto".into(),
+            vocabulary: String::new(),
         }
     }
 }
@@ -101,6 +107,14 @@ impl Paths {
     }
     pub fn backgrounds(&self) -> PathBuf {
         self.config_dir.join("backgrounds")
+    }
+    /// Speed tests of accuracy-pass models on this computer.
+    pub fn accuracy_profile(&self) -> PathBuf {
+        self.config_dir.join("accuracy-profile.json")
+    }
+    /// Models downloaded in the app (the accuracy-pass ones).
+    pub fn downloaded_models(&self) -> PathBuf {
+        self.config_dir.join("models")
     }
 }
 
@@ -153,6 +167,8 @@ pub struct AppState {
     /// Latest confirmed detections, newest first (phone remote).
     pub recent: Mutex<VecDeque<Slide>>,
     pub share: Share,
+    /// Cancel flags of model downloads in progress, by model id.
+    pub downloads: Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl AppState {
@@ -198,6 +214,7 @@ impl AppState {
             plan: Mutex::new(plan),
             recent: Mutex::new(VecDeque::new()),
             share: Share::new(),
+            downloads: Mutex::new(Default::default()),
         })
     }
 

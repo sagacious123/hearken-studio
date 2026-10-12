@@ -2,7 +2,13 @@
 //! touches files, SQLite, audio devices or a shared lock is `async`; only trivial reads stay
 //! sync. Slow work (models, device enumeration) also moves to the blocking pool.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -10,13 +16,15 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::{
     backgrounds::{self, UploadedBackground},
     asr::{
+        accuracy::{self, AccuracyProfile, Calibration},
         hardware::{self, HardwareProfile},
-        whisper::model_path,
+        models::{self, ModelStatus},
+        whisper::{WhisperEngine, GPU_BACKEND},
     },
     audio::capture::{self, DeviceInfo},
     events,
     history::{self, ArchiveHit, DaySummary, Insights},
-    pipeline::{self, PipelineConfig, PipelineInfo},
+    pipeline::{self, PipelineConfig, PipelineInfo, RefineConfig},
     presentation::{self, MonitorInfo, OutputState},
     scripture::{self, db, db::Translation, parser::ReferenceParser, ScriptureRef, Slide},
     share::ShareInfo,
@@ -120,18 +128,33 @@ pub async fn start_pipeline(app: AppHandle, state: State<'_, AppState>) -> CmdRe
     };
     let settings = state.settings.lock().clone();
     let model = settings.model_override.clone().unwrap_or(profile.model.clone());
-    let model_file = model_path(&state.paths.models_dir, &model)
-        .ok_or_else(|| format!("model '{model}' not found — run scripts/fetch_models.sh"))?;
+    let (bundled, downloaded) = (state.paths.models_dir.clone(), state.paths.downloaded_models());
+    let dirs = [bundled.as_path(), downloaded.as_path()];
+    let model_file = models::find(&dirs, &model).ok_or_else(|| format!("model '{model}' not found — run scripts/fetch_models.sh"))?;
+    let use_gpu = settings.gpu_override.unwrap_or(profile.use_gpu);
+    let calibrations = AccuracyProfile::load(&state.paths.accuracy_profile(), env!("CARGO_PKG_VERSION"));
+    let refine = choose_accuracy_model(&settings.accuracy_model, use_gpu, &dirs, &calibrations).map(|(id, path, calibration, forced)| RefineConfig {
+        model_path: path,
+        model_name: id.to_owned(),
+        use_gpu,
+        threads: profile.threads,
+        calibration,
+        forced,
+        calibration_file: state.paths.accuracy_profile(),
+        bench_wav: state.paths.bench_wav.clone(),
+        app_version: env!("CARGO_PKG_VERSION").to_owned(),
+    });
 
     let cfg = PipelineConfig {
         device: settings.input_device.clone(),
         model_path: model_file,
         model_name: model,
-        use_gpu: settings.gpu_override.unwrap_or(profile.use_gpu),
+        use_gpu,
         threads: profile.threads,
         step_ms: profile.step_ms,
         reduced_ctx: settings.reduced_encoder_ctx,
         bible_path: state.paths.bible_db.clone(),
+        refine,
     };
     let v11n = state.versification.clone();
     let app2 = app.clone();
@@ -151,6 +174,166 @@ pub async fn stop_pipeline(state: State<'_, AppState>) -> CmdResult<()> {
         tauri::async_runtime::spawn_blocking(move || h.stop()).await.map_err(err)?;
     }
     Ok(())
+}
+
+/// Which model (if any) re-transcribes finished sentences, with its saved speed test.
+/// "auto": the most accurate installed model proven to keep up here; failing that, an
+/// untested one (it's timed on first use: GPU machines try Turbo first, CPU-only Small).
+fn choose_accuracy_model(
+    choice: &str,
+    use_gpu: bool,
+    dirs: &[&Path],
+    profile: &AccuracyProfile,
+) -> Option<(&'static str, PathBuf, Option<Calibration>, bool)> {
+    let backend = if use_gpu { GPU_BACKEND } else { "cpu" };
+    let installed = |id: &'static str| models::find(dirs, id).map(|p| (id, p));
+    let cal = |id: &str| profile.get(id, backend).cloned();
+    match choice {
+        "off" => None,
+        "auto" => {
+            let best_known = ["large-v3-turbo", "small.en"].into_iter().filter(|id| cal(id).is_some_and(|c| c.usable)).find_map(installed);
+            let untested = if use_gpu { ["large-v3-turbo", "small.en"] } else { ["small.en", "large-v3-turbo"] };
+            let first_untested = || untested.into_iter().filter(|id| cal(id).is_none()).find_map(installed);
+            best_known.or_else(first_untested).map(|(id, p)| (id, p, cal(id), false))
+        }
+        other => models::CATALOG.iter().find(|m| m.id == other && m.accuracy).and_then(|m| installed(m.id)).map(|(id, p)| (id, p, cal(id), true)),
+    }
+}
+
+/// Time a downloaded model on this computer and save the result (blocking).
+fn calibrate_now(state: &AppState, id: &str, use_gpu: bool, threads: usize) -> Result<Calibration, String> {
+    let dirs = model_dirs(state);
+    let path = models::find(&[dirs[0].as_path(), dirs[1].as_path()], id).ok_or("model not installed")?;
+    let mut engine = WhisperEngine::load_with_fallback(&path, use_gpu, threads).map_err(|e| format!("{e:#}"))?;
+    let audio = hardware::load_wav(&state.paths.bench_wav).map_err(|e| format!("{e:#}"))?;
+    let books: Vec<&str> = scripture::books::BOOKS.iter().map(|b| b.display).collect();
+    let prompt = crate::asr::whisper::accurate_prompt("", &[], &books);
+    let cal = accuracy::calibrate(&mut engine, id, &audio, &prompt).map_err(|e| format!("{e:#}"))?;
+    AccuracyProfile::record(&state.paths.accuracy_profile(), env!("CARGO_PKG_VERSION"), cal.clone());
+    Ok(cal)
+}
+
+// ---------- speech models ----------
+
+fn model_dirs(state: &AppState) -> [std::path::PathBuf; 2] {
+    [state.paths.models_dir.clone(), state.paths.downloaded_models()]
+}
+
+/// A model plus how it runs on this computer (from its speed test, when it has one).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelView {
+    #[serde(flatten)]
+    status: ModelStatus,
+    /// None until tested; false = too slow for the accuracy pass here.
+    usable: Option<bool>,
+    speed: Option<String>,
+}
+
+fn model_views(state: &AppState) -> Vec<ModelView> {
+    let dirs = model_dirs(state);
+    let use_gpu = {
+        let s = state.settings.lock();
+        s.gpu_override.or(state.hardware.lock().as_ref().map(|p| p.use_gpu)).unwrap_or(false)
+    };
+    let backend = if use_gpu { GPU_BACKEND } else { "cpu" };
+    let profile = AccuracyProfile::load(&state.paths.accuracy_profile(), env!("CARGO_PKG_VERSION"));
+    models::statuses(&[dirs[0].as_path(), dirs[1].as_path()])
+        .into_iter()
+        .map(|status| {
+            let cal = profile.get(status.id, backend).filter(|_| status.installed);
+            ModelView { usable: cal.map(|c| c.usable), speed: cal.map(|c| if c.usable { c.describe() } else { "too slow on this computer".into() }), status }
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn list_models(state: State<'_, AppState>) -> CmdResult<Vec<ModelView>> {
+    Ok(model_views(&state))
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgress {
+    id: String,
+    received: u64,
+    total: u64,
+    /// "download", then "testing" while the speed test runs.
+    phase: &'static str,
+}
+
+/// Time an installed model on this computer again (e.g. after closing heavy apps).
+#[tauri::command]
+pub async fn test_model_speed(id: String, app: AppHandle) -> CmdResult<Vec<ModelView>> {
+    if app.state::<AppState>().pipeline.lock().is_some() {
+        return Err("stop listening first: the test needs the computer's full attention".into());
+    }
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app2.state::<AppState>();
+        let (use_gpu, threads) = gpu_and_threads(&state)?;
+        calibrate_now(&state, &id, use_gpu, threads)
+    })
+    .await
+    .map_err(err)??;
+    Ok(model_views(&app.state::<AppState>()))
+}
+
+fn gpu_and_threads(state: &AppState) -> Result<(bool, usize), String> {
+    let profile = state.hardware.lock().clone().ok_or("start listening once first, so the computer is benchmarked")?;
+    let gpu = state.settings.lock().gpu_override.unwrap_or(profile.use_gpu);
+    Ok((gpu, profile.threads))
+}
+
+/// Download a model for the accuracy pass (resumable, checksum-verified). Progress arrives as
+/// `models://progress` events; resolves when the model is ready.
+#[tauri::command]
+pub async fn download_model(id: String, app: AppHandle, state: State<'_, AppState>) -> CmdResult<Vec<ModelView>> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    if state.downloads.lock().insert(id.clone(), cancel.clone()).is_some() {
+        return Err("that model is already downloading".into());
+    }
+    let dir = state.paths.downloaded_models();
+    let (app2, id2) = (app.clone(), id.clone());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        models::download(&id2, &dir, |received, total| {
+            let _ = app2.emit(events::MODEL_PROGRESS, DownloadProgress { id: id2.clone(), received, total, phase: "download" });
+        }, &cancel)?;
+        // Time it right away, so "Automatic" knows whether it keeps up on this computer.
+        let state = app2.state::<AppState>();
+        if state.pipeline.lock().is_none() {
+            if let Ok((use_gpu, threads)) = gpu_and_threads(&state) {
+                let _ = app2.emit(events::MODEL_PROGRESS, DownloadProgress { id: id2.clone(), received: 1, total: 1, phase: "testing" });
+                if let Err(e) = calibrate_now(&state, &id2, use_gpu, threads) {
+                    log::warn!("speed test of {id2} failed: {e}");
+                }
+            }
+        }
+        anyhow::Ok(())
+    })
+    .await
+    .map_err(err)
+    .and_then(|r| r.map_err(|e| format!("{e:#}")));
+    state.downloads.lock().remove(&id);
+    result?;
+    Ok(model_views(&state))
+}
+
+#[tauri::command]
+pub async fn cancel_model_download(id: String, state: State<'_, AppState>) -> CmdResult<()> {
+    if let Some(flag) = state.downloads.lock().get(&id) {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_model(id: String, state: State<'_, AppState>) -> CmdResult<Vec<ModelView>> {
+    if state.pipeline.lock().is_some() {
+        return Err("stop listening before removing a model".into());
+    }
+    models::delete(&id, &state.paths.downloaded_models()).map_err(|e| format!("{e:#}"))?;
+    Ok(model_views(&state))
 }
 
 // ---------- scripture ----------
@@ -463,7 +646,45 @@ mod tests {
             songs: SongLibrary::load(dir.join("songs.json")),
             recent: Mutex::new(Default::default()),
             share: Share::new(),
+            downloads: Mutex::new(Default::default()),
         }
+    }
+
+    #[test]
+    fn automatic_accuracy_model_prefers_proven_then_untested() {
+        let dir = std::env::temp_dir().join(format!("sb-choose-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["ggml-small.en-q5_1.bin", "ggml-large-v3-turbo-q5_0.bin"] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        let dirs = [dir.as_path()];
+        let cal = |model: &str, backend: &str, usable: bool| Calibration {
+            model: model.into(), backend: backend.into(), usable, beam: true, full_ctx: false, decode_ms: 1.0, audio_ms: 10.0,
+        };
+        let id = |c: Option<(&'static str, PathBuf, Option<Calibration>, bool)>| c.map(|c| c.0);
+
+        // Nothing tested yet: GPU machines try Turbo first, CPU-only machines Small.
+        let empty = AccuracyProfile::default();
+        assert_eq!(id(choose_accuracy_model("auto", true, &dirs, &empty)), Some("large-v3-turbo"));
+        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &empty)), Some("small.en"));
+
+        // CPU: Turbo proven too slow, Small proven fine → Small; both too slow → none.
+        let mut p = AccuracyProfile { app_version: "x".into(), entries: vec![cal("large-v3-turbo", "cpu", false), cal("small.en", "cpu", true)] };
+        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &p)), Some("small.en"));
+        p.entries = vec![cal("large-v3-turbo", "cpu", false), cal("small.en", "cpu", false)];
+        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &p)), None);
+
+        // A proven model beats an untested more-accurate one only when the latter is unknown:
+        // Turbo proven usable wins over everything.
+        p.entries = vec![cal("large-v3-turbo", GPU_BACKEND, true)];
+        assert_eq!(id(choose_accuracy_model("auto", true, &dirs, &p)), Some("large-v3-turbo"));
+
+        // Explicit choice is honoured (and flagged as forced); off is off.
+        let forced = choose_accuracy_model("large-v3-turbo", false, &dirs, &AccuracyProfile::default()).unwrap();
+        assert_eq!((forced.0, forced.3), ("large-v3-turbo", true));
+        assert!(choose_accuracy_model("off", true, &dirs, &empty).is_none());
+        assert!(choose_accuracy_model("base.en", true, &dirs, &empty).is_none()); // not an accuracy model
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Regression: opening the Plan tab froze the app (the plan was locked twice).

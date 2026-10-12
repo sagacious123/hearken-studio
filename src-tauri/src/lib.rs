@@ -23,6 +23,7 @@ pub mod events {
     pub const WARNING: &str = "pipeline://warning";
     pub const OUTPUT_STATE: &str = "output://state";
     pub const HARDWARE_PROGRESS: &str = "hardware://progress";
+    pub const MODEL_PROGRESS: &str = "models://progress";
 }
 
 pub fn run() {
@@ -92,6 +93,11 @@ pub fn run() {
             commands::save_background,
             commands::delete_background,
             commands::background_path,
+            commands::list_models,
+            commands::download_model,
+            commands::cancel_model_download,
+            commands::delete_model,
+            commands::test_model_speed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hearken Studio");

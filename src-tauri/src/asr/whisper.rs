@@ -12,15 +12,56 @@ pub const GPU_BACKEND: &str = if cfg!(target_os = "macos") { "metal" } else { "v
 const DOMAIN_PROMPT: &str = "Sermon transcript with scripture references such as John 3:16, Romans 8:28, \
 1 Corinthians 13:4-7, Philippians 4:13, Psalm 23:1, Habakkuk 2:3, Ecclesiastes 3:1, Deuteronomy 31:6.";
 
+/// Whisper keeps only the last ~224 prompt tokens; this keeps us comfortably inside that.
+const MAX_PROMPT_CHARS: usize = 820;
+const MAX_VOCAB_CHARS: usize = 300;
+
+/// Church-specific words ("Pastor Adeyemi, Ebenezer, Ikeja") from the operator, tidied.
+fn vocabulary(words: &str) -> String {
+    let terms: Vec<&str> = words.split([',', '\n', ';']).map(str::trim).filter(|t| !t.is_empty()).collect();
+    let mut out = terms.join(", ");
+    if out.len() > MAX_VOCAB_CHARS {
+        out.truncate(out[..MAX_VOCAB_CHARS].rfind(", ").unwrap_or(MAX_VOCAB_CHARS));
+    }
+    out
+}
+
+/// Prompt for the live (fast) decodes: short, because every prompt token costs time on each
+/// partial. The operator's own vocabulary goes last, where Whisper weighs it most.
+pub fn live_prompt(vocab: &str) -> String {
+    match vocabulary(vocab) {
+        v if v.is_empty() => DOMAIN_PROMPT.to_owned(),
+        v => format!("{DOMAIN_PROMPT} {v}."),
+    }
+}
+
+/// Prompt for the accuracy pass: every book name (so "Philippians" isn't heard as
+/// "Philippines"), today's planned passages, then the operator's vocabulary.
+pub fn accurate_prompt(vocab: &str, planned: &[String], books: &[&str]) -> String {
+    let mut parts = vec![format!("Sermon transcript. Books of the Bible: {}.", books.join(", "))];
+    if !planned.is_empty() {
+        parts.push(format!("Today's readings: {}.", planned.iter().take(12).cloned().collect::<Vec<_>>().join(", ")));
+    }
+    let v = vocabulary(vocab);
+    if !v.is_empty() {
+        parts.push(format!("{v}."));
+    }
+    let mut prompt = parts.join(" ");
+    if prompt.len() > MAX_PROMPT_CHARS {
+        // Drop from the front: the end (readings, vocabulary) matters most.
+        let cut = prompt.len() - MAX_PROMPT_CHARS;
+        let start = prompt[cut..].find(' ').map_or(cut, |i| cut + i + 1);
+        prompt = prompt[start..].to_owned();
+    }
+    prompt
+}
+
 /// Common Whisper hallucinations on silence, music or applause.
 const HALLUCINATIONS: &[&str] = &["thank you.", "thank you", "thanks for watching!", "thank you for watching.", "you", "bye.", "."];
 
-/// Resolve a model id (`tiny.en`, `base.en`) to a file, preferring the q5_1 quantization.
+/// Resolve a model id (`tiny.en`, `base.en`, …) to a file in `models_dir`.
 pub fn model_path(models_dir: &Path, model: &str) -> Option<PathBuf> {
-    [format!("ggml-{model}-q5_1.bin"), format!("ggml-{model}.bin")]
-        .into_iter()
-        .map(|f| models_dir.join(f))
-        .find(|p| p.exists())
+    super::models::find(&[models_dir], model)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +71,20 @@ pub struct DecodeOptions {
     /// Shrink the encoder context to the audio length instead of the fixed 30 s window.
     /// The single biggest speed-up for short windows on tiny/base (often 3–5x).
     pub reduced_ctx: bool,
+    /// Beam search (5 candidates) instead of greedy decoding. Accuracy pass only.
+    pub beam: bool,
+}
+
+impl DecodeOptions {
+    pub const fn live(partial: bool, reduced_ctx: bool) -> Self {
+        Self { partial, reduced_ctx, beam: false }
+    }
+
+    /// The accuracy pass over a finished sentence. `full_ctx` gives the encoder the whole 30 s
+    /// window (best quality, costly on CPU); otherwise it's sized to the sentence.
+    pub const fn accurate(full_ctx: bool) -> Self {
+        Self { partial: false, reduced_ctx: !full_ctx, beam: true }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -73,7 +128,7 @@ impl WhisperEngine {
         self.backend
     }
 
-    pub fn transcribe(&mut self, audio: &[f32], opts: DecodeOptions) -> Result<Transcript> {
+    pub fn transcribe(&mut self, audio: &[f32], opts: DecodeOptions, prompt: &str) -> Result<Transcript> {
         // whisper.cpp rejects < 1 s of audio; pad with silence.
         let min_len = SAMPLE_RATE * 1100 / 1000;
         let padded;
@@ -86,7 +141,12 @@ impl WhisperEngine {
             audio
         };
 
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        let strategy = if opts.beam {
+            SamplingStrategy::BeamSearch { beam_size: 5, patience: -1.0 }
+        } else {
+            SamplingStrategy::Greedy { best_of: 1 }
+        };
+        let mut params = FullParams::new(strategy);
         params.set_n_threads(self.threads);
         params.set_language(Some("en"));
         params.set_translate(false);
@@ -101,7 +161,7 @@ impl WhisperEngine {
         // Temperature fallback re-decodes on low confidence — great for accuracy, terrible for
         // latency spikes. Only allow it on finals.
         params.set_temperature_inc(if opts.partial { 0.0 } else { 0.2 });
-        params.set_initial_prompt(DOMAIN_PROMPT);
+        params.set_initial_prompt(if prompt.is_empty() { DOMAIN_PROMPT } else { prompt });
         if opts.partial {
             params.set_max_tokens(64);
         }
@@ -160,7 +220,20 @@ fn strip_annotations(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_annotations;
+    use super::*;
+
+    #[test]
+    fn prompts_carry_vocabulary_and_stay_short() {
+        assert_eq!(live_prompt("  "), DOMAIN_PROMPT);
+        assert!(live_prompt("Pastor Adeyemi,\nEbenezer ; Ikeja").ends_with("Pastor Adeyemi, Ebenezer, Ikeja."));
+        let books: Vec<&str> = crate::scripture::books::BOOKS.iter().map(|b| b.display).collect();
+        let p = accurate_prompt("Pastor Adeyemi", &["Romans 8:28".into()], &books);
+        assert!(p.len() <= MAX_PROMPT_CHARS, "{}", p.len());
+        assert!(p.ends_with("Today's readings: Romans 8:28. Pastor Adeyemi."), "{p}");
+        assert!(p.contains("Philippians"));
+        let long = "word, ".repeat(200);
+        assert!(vocabulary(&long).len() <= MAX_VOCAB_CHARS);
+    }
 
     #[test]
     fn strips_non_speech_annotations() {

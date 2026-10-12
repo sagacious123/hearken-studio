@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { api, type DeviceInfo, type MonitorInfo } from "../../lib/ipc";
 import { useDashboard } from "../store";
+import { AccuracyButton } from "./AccuracyButton";
 import { ShareButton } from "./ShareButton";
 
 /** Device enumeration takes ~200–500 ms (off the UI thread), so don't repeat it within this. */
@@ -150,6 +151,7 @@ export function ControlBar() {
         >
           Style
         </button>
+        <AccuracyButton />
         <ShareButton />
         <select
           value={monitor ?? ""}

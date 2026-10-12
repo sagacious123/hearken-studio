@@ -58,6 +58,8 @@ export interface TranscriptEvent {
   confidence: number;
   inferenceMs: number;
   audioMs: number;
+  /** From the accuracy pass: replaces the quick text of the same utterance. */
+  refined: boolean;
 }
 
 export type DetectionKind = "explicit" | "contextual" | "quote" | "song";
@@ -89,6 +91,8 @@ export interface PipelineInfo {
   model: string;
   backend: string;
   stepMs: number;
+  /** Accuracy-pass model, if running. */
+  refineModel: string | null;
 }
 
 export interface Settings {
@@ -106,6 +110,24 @@ export interface Settings {
   shareEnabled: boolean;
   sharePort: number;
   churchName: string;
+  /** "auto" | "off" | a model id. */
+  accuracyModel: string;
+  /** Names and words to listen for, comma or line separated. */
+  vocabulary: string;
+}
+
+export interface ModelStatus {
+  id: string;
+  label: string;
+  sizeMb: number;
+  bundled: boolean;
+  /** Usable for the accuracy pass. */
+  accuracy: boolean;
+  installed: boolean;
+  note: string;
+  /** From the speed test on this computer: null = not tested yet, false = too slow. */
+  usable: boolean | null;
+  speed: string | null;
 }
 
 export interface BenchResult {
@@ -264,6 +286,11 @@ export const api = {
     }),
   deleteBackground: (file: string) => invoke<UploadedBackground[]>("delete_background", { file }),
   backgroundPath: (file: string) => invoke<string | null>("background_path", { file }),
+  listModels: () => invoke<ModelStatus[]>("list_models"),
+  downloadModel: (id: string) => invoke<ModelStatus[]>("download_model", { id }),
+  cancelModelDownload: (id: string) => invoke<void>("cancel_model_download", { id }),
+  deleteModel: (id: string) => invoke<ModelStatus[]>("delete_model", { id }),
+  testModelSpeed: (id: string) => invoke<ModelStatus[]>("test_model_speed", { id }),
 };
 
 const on =
@@ -280,4 +307,5 @@ export const events = {
   pipelineWarning: on<string>("pipeline://warning"),
   outputState: on<OutputState>("output://state"),
   hardwareProgress: on<string>("hardware://progress"),
+  modelProgress: on<{ id: string; received: number; total: number; phase: "download" | "testing" }>("models://progress"),
 };

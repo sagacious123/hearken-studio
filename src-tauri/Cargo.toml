@@ -43,6 +43,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 tiny_http = "0.12"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
+# Model downloads (accuracy-pass models aren't bundled): blocking HTTPS + checksum
+ureq = "2"
+sha2 = "0.10"
+
 # Hardware detection
 sysinfo = "0.33"
 

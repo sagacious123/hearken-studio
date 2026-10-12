@@ -28,7 +28,14 @@ export function Dashboard() {
     <div className="flex h-full flex-col">
       <UpdateBanner />
       <ControlBar />
-      {error && <div className="bg-red-950 px-4 py-2 text-sm text-red-200">{error}</div>}
+      {error && (
+        <div className="flex items-start gap-3 bg-red-950 px-4 py-2 text-sm text-red-200">
+          <span className="flex-1">{error}</span>
+          <button onClick={() => useDashboard.setState({ error: null })} className="text-red-300 hover:text-white" aria-label="Dismiss">
+            ×
+          </button>
+        </div>
+      )}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <main className="grid min-h-0 flex-1 grid-cols-[minmax(280px,1fr)_minmax(300px,1fr)_minmax(420px,1.4fr)] gap-px bg-zinc-800">
           <Sidebar />

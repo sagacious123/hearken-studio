@@ -22,6 +22,8 @@ export interface TranscriptLine {
   text: string;
   confidence: number;
   inferenceMs: number;
+  /** Replaced by the accuracy pass. */
+  refined: boolean;
 }
 
 interface DashboardState {
@@ -103,11 +105,20 @@ export const useDashboard = create<DashboardState>((set, get) => ({
           set({ partial: t.text ? t : null });
           return;
         }
+        const line = { utteranceId: t.utteranceId, text: t.text, confidence: t.confidence, inferenceMs: t.inferenceMs, refined: t.refined };
+        if (t.refined) {
+          // The accuracy pass replaces the quick text of the same sentence (or fills it in).
+          if (!t.text) return;
+          set((s) => {
+            const i = s.finals.findIndex((f) => f.utteranceId === t.utteranceId);
+            if (i >= 0) return { finals: s.finals.map((f, j) => (j === i ? line : f)) };
+            return { finals: [...s.finals, line].sort((a, b) => a.utteranceId - b.utteranceId).slice(-MAX_FINALS) };
+          });
+          return;
+        }
         set((s) => ({
           partial: s.partial?.utteranceId === t.utteranceId ? null : s.partial,
-          finals: t.text
-            ? [...s.finals, { utteranceId: t.utteranceId, text: t.text, confidence: t.confidence, inferenceMs: t.inferenceMs }].slice(-MAX_FINALS)
-            : s.finals,
+          finals: t.text ? [...s.finals, line].slice(-MAX_FINALS) : s.finals,
           // Tentative detections that the final transcript didn't confirm are discarded.
           // (Confirmed ones are re-emitted right after this event with tentative=false.)
           queue: s.queue.filter((d) => !(d.tentative && d.utteranceId === t.utteranceId)),

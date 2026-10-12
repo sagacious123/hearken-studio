@@ -173,16 +173,16 @@ fn bench_one(path: &Path, model: &str, gpu: bool, threads: usize, audio: &[f32],
         Err(e) => return fail(e.to_string()),
     };
     let load_ms = ms(t.elapsed());
-    let opts = DecodeOptions { partial: true, reduced_ctx };
+    let opts = DecodeOptions::live(true, reduced_ctx);
 
     // Warm-up: the first Metal/Vulkan run compiles pipelines and is not representative.
-    if let Err(e) = engine.transcribe(audio, opts) {
+    if let Err(e) = engine.transcribe(audio, opts, "") {
         return fail(e.to_string());
     }
     let mut times = Vec::with_capacity(3);
     for _ in 0..3 {
         let t = Instant::now();
-        if let Err(e) = engine.transcribe(audio, opts) {
+        if let Err(e) = engine.transcribe(audio, opts, "") {
             return fail(e.to_string());
         }
         times.push(ms(t.elapsed()));
@@ -242,6 +242,14 @@ fn heuristic(specs: Specs, models_dir: &Path, app_version: &str) -> Result<Hardw
 }
 
 fn load_bench_audio(path: &Path) -> Result<Vec<f32>> {
+    let samples = load_wav(path)?;
+    let n = (SAMPLE_RATE * BENCH_WINDOW_MS as usize / 1000).min(samples.len());
+    ensure!(n >= SAMPLE_RATE, "benchmark clip too short");
+    Ok(samples[..n].to_vec())
+}
+
+/// The whole 16 kHz mono clip (the accuracy pass is calibrated on a full sentence).
+pub fn load_wav(path: &Path) -> Result<Vec<f32>> {
     let mut reader = hound::WavReader::open(path)?;
     let spec = reader.spec();
     ensure!(spec.sample_rate as usize == SAMPLE_RATE && spec.channels == 1, "benchmark clip must be 16 kHz mono");
@@ -251,9 +259,7 @@ fn load_bench_audio(path: &Path) -> Result<Vec<f32>> {
         }
         hound::SampleFormat::Float => reader.samples::<f32>().collect::<Result<_, _>>()?,
     };
-    let n = (SAMPLE_RATE * BENCH_WINDOW_MS as usize / 1000).min(samples.len());
-    ensure!(n >= SAMPLE_RATE, "benchmark clip too short");
-    Ok(samples[..n].to_vec())
+    Ok(samples)
 }
 
 fn ms(d: Duration) -> f32 {
@@ -277,8 +283,37 @@ mod tests {
         let mut engine = WhisperEngine::load_with_fallback(&path, profile.use_gpu, profile.threads).unwrap();
         let audio = load_bench_audio(&res.join("bench/jfk.wav")).unwrap();
         let t = Instant::now();
-        let out = engine.transcribe(&audio, DecodeOptions { partial: false, reduced_ctx: true }).unwrap();
+        let out = engine.transcribe(&audio, DecodeOptions::live(false, true), "").unwrap();
         eprintln!("final decode {:.0} ms ({:.2} conf): {}", ms(t.elapsed()), out.confidence, out.text);
         assert!(out.text.to_lowercase().contains("ask not"), "unexpected transcript: {}", out.text);
+    }
+
+    /// Accuracy-pass cost per model and backend on a whole 11 s sentence (the clip), as used
+    /// for finished sentences. Looks in the bundled models and the app's downloads folder.
+    /// `cargo test --release -- --ignored --nocapture accuracy_pass_speed`
+    #[test]
+    #[ignore = "needs downloaded models"]
+    fn accuracy_pass_speed() {
+        let res = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let downloads = std::env::var("HOME").map(|h| Path::new(&h).join("Library/Application Support/com.hearkenstudio.app/models")).unwrap();
+        let dirs = [res.join("models"), downloads];
+        let dirs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
+        let mut reader = hound::WavReader::open(res.join("bench/jfk.wav")).unwrap();
+        let audio: Vec<f32> = reader.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
+        let threads = Specs::detect().recommended_threads();
+        let books: Vec<&str> = crate::scripture::books::BOOKS.iter().map(|b| b.display).collect();
+        let prompt = super::super::whisper::accurate_prompt("", &[], &books);
+        let variants = [("beam+full", true, true), ("beam+fit", true, false), ("greedy+full", false, true), ("greedy+fit", false, false)];
+        for id in ["base.en", "small.en", "large-v3-turbo"] {
+            let Some(path) = super::super::models::find(&dirs, id) else { eprintln!("{id}: not installed"); continue };
+            let Ok(mut engine) = WhisperEngine::load(&path, false, threads) else { eprintln!("{id}: load failed"); continue };
+            for (name, beam, full) in variants {
+                let opts = DecodeOptions { beam, ..DecodeOptions::accurate(full) };
+                let _ = engine.transcribe(&audio, opts, &prompt); // warm-up
+                let t = Instant::now();
+                let out = engine.transcribe(&audio, opts, &prompt).unwrap();
+                eprintln!("{id:15} cpu {name:12} {:6.0} ms for {:.1} s  {}", ms(t.elapsed()), audio.len() as f32 / 16000.0, out.text);
+            }
+        }
     }
 }

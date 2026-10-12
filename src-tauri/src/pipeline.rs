@@ -24,7 +24,8 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, TrySendError};
+use parking_lot::Mutex;
 use ringbuf::{
     traits::{Consumer, Split},
     HeapCons, HeapRb,
@@ -34,8 +35,9 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
     asr::{
-        hardware::PARTIAL_WINDOW_MS,
-        whisper::{DecodeOptions, WhisperEngine},
+        accuracy::{self, AccuracyProfile, Calibration},
+        hardware::{self, PARTIAL_WINDOW_MS},
+        whisper::{self, DecodeOptions, WhisperEngine},
     },
     audio::{
         capture::{self, CaptureHandle},
@@ -50,7 +52,7 @@ use crate::{
     scripture::{
         build_slide,
         parser::{ParsedRef, RefKind, ReferenceParser},
-        quote, BibleDb, Slide, Versification,
+        books, quote, BibleDb, Slide, Versification,
     },
     state::AppState,
 };
@@ -76,6 +78,10 @@ const PLAN_BOOST: f32 = 0.08;
 /// Songs go up automatically only above this, and only onto a clear screen or over another song.
 const SONG_AUTO_THRESHOLD: f32 = 0.85;
 
+/// Finished sentences waiting for the accuracy pass; beyond this they keep the quick text,
+/// so a slow computer never builds a backlog.
+const REFINE_QUEUE: usize = 3;
+
 pub struct PipelineConfig {
     pub device: Option<String>,
     pub model_path: PathBuf,
@@ -85,6 +91,23 @@ pub struct PipelineConfig {
     pub step_ms: u32,
     pub reduced_ctx: bool,
     pub bible_path: PathBuf,
+    /// Second, more accurate model that re-transcribes each finished sentence.
+    pub refine: Option<RefineConfig>,
+}
+
+pub struct RefineConfig {
+    pub model_path: PathBuf,
+    pub model_name: String,
+    pub use_gpu: bool,
+    pub threads: usize,
+    /// Saved speed test for this model on this computer; measured on first use when absent.
+    pub calibration: Option<Calibration>,
+    /// Chosen explicitly by the operator: run it even if it's slow (the bounded queue keeps
+    /// live updates safe). Automatic choice drops a model that can't keep up.
+    pub forced: bool,
+    pub calibration_file: PathBuf,
+    pub bench_wav: PathBuf,
+    pub app_version: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,6 +118,8 @@ pub struct PipelineInfo {
     pub model: String,
     pub backend: String,
     pub step_ms: u32,
+    /// Accuracy-pass model, if one is running.
+    pub refine_model: Option<String>,
 }
 
 pub struct PipelineHandle {
@@ -115,6 +140,37 @@ impl PipelineHandle {
     }
 }
 
+/// Reference keys already sent to the operator, shared by the live and accuracy passes:
+/// key → (utterance, tentative, when).
+#[derive(Clone, Default)]
+struct Dedupe(Arc<Mutex<HashMap<String, (u64, bool, Instant)>>>);
+
+impl Dedupe {
+    /// Once per utterance (plus one tentative→confirmed upgrade), and not again across
+    /// utterances within the dedupe window.
+    fn should_emit(&self, key: &str, utterance: u64, tentative: bool) -> bool {
+        let mut emitted = self.0.lock();
+        let emit = match emitted.get(key) {
+            None => true,
+            Some(&(utt, was_tentative, _)) if utt == utterance => was_tentative && !tentative,
+            Some(&(_, _, at)) => at.elapsed() > DEDUPE_WINDOW,
+        };
+        if emit {
+            emitted.insert(key.to_owned(), (utterance, tentative, Instant::now()));
+        }
+        if emitted.len() > 512 {
+            emitted.retain(|_, (_, _, at)| at.elapsed() < DEDUPE_WINDOW);
+        }
+        emit
+    }
+}
+
+struct RefineJob {
+    utterance: u64,
+    audio: Vec<f32>,
+    captured_at: Instant,
+}
+
 struct Job {
     utterance: u64,
     audio: Vec<f32>,
@@ -132,6 +188,8 @@ struct TranscriptEvent {
     confidence: f32,
     inference_ms: f32,
     audio_ms: u32,
+    /// From the accuracy pass: replaces the quick text of the same utterance.
+    refined: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -165,6 +223,60 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
     let step_ms = Arc::new(AtomicU32::new(cfg.step_ms));
     let infer_ewma = Arc::new(AtomicU32::new(0f32.to_bits()));
     let (job_tx, job_rx) = crossbeam_channel::unbounded::<Job>();
+    let dedupe = Dedupe::default();
+
+    // 0. Accuracy-pass thread. Loads in the background (a large model can take seconds), and
+    //    never blocks or fails listening: until it's ready, or if it can't load, sentences just
+    //    keep their quick transcription.
+    let (refine_tx, refine_thread, refine_model) = match cfg.refine {
+        Some(rc) => {
+            let (tx, rx) = crossbeam_channel::bounded::<RefineJob>(REFINE_QUEUE);
+            let (app, v11n, bible_path, dedupe) = (app.clone(), v11n.clone(), cfg.bible_path.clone(), dedupe.clone());
+            let name = rc.model_name.clone();
+            let handle = thread::Builder::new().name("asr-refine".into()).spawn(move || {
+                let engine = WhisperEngine::load_with_fallback(&rc.model_path, rc.use_gpu, rc.threads);
+                let bible = BibleDb::open(&bible_path);
+                let (mut engine, bible) = match (engine, bible) {
+                    (Ok(e), Ok(b)) => (e, b),
+                    (Err(e), _) | (_, Err(e)) => {
+                        log::warn!("accuracy pass unavailable: {e:#}");
+                        let _ = app.emit(events::WARNING, format!("The accuracy model ({}) couldn't load, so quick transcription is used: {e:#}", rc.model_name));
+                        return;
+                    }
+                };
+                let cal = match rc.calibration {
+                    Some(c) => c,
+                    None => {
+                        // First use on this computer: time it on a full sentence and remember.
+                        let books: Vec<&str> = books::BOOKS.iter().map(|b| b.display).collect();
+                        let prompt = whisper::accurate_prompt("", &[], &books);
+                        match hardware::load_wav(&rc.bench_wav).and_then(|a| accuracy::calibrate(&mut engine, &rc.model_name, &a, &prompt)) {
+                            Ok(c) => {
+                                AccuracyProfile::record(&rc.calibration_file, &rc.app_version, c.clone());
+                                c
+                            }
+                            Err(e) => {
+                                log::warn!("accuracy calibration failed ({e:#}); using the standard setting");
+                                Calibration { model: rc.model_name.clone(), backend: engine.backend().into(), usable: true, beam: false, full_ctx: false, decode_ms: 0.0, audio_ms: 1.0 }
+                            }
+                        }
+                    }
+                };
+                if !cal.usable && !rc.forced {
+                    let _ = app.emit(
+                        events::WARNING,
+                        format!("{} is too slow on this computer for the accuracy pass, so quick transcription is used. Choose a smaller model under Accuracy.", rc.model_name),
+                    );
+                    return;
+                }
+                log::info!("accuracy pass ready: {} on {} ({})", rc.model_name, engine.backend(), cal.describe());
+                RefineWorker { app, bible, v11n, parser: ReferenceParser::new(), dedupe, opts: cal.options() }.run(&mut engine, rx);
+                log::info!("accuracy pass stopped");
+            })?;
+            (Some(tx), Some(handle), Some(name))
+        }
+        None => (None, None, None),
+    };
 
     // 1. ASR thread: load model first so startup errors surface to the caller.
     let (ready_tx, ready_rx) = crossbeam_channel::bounded::<Result<&'static str>>(1);
@@ -194,7 +306,8 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
                 parser: ReferenceParser::new(),
                 follower: Follower::default(),
                 lyrics: LyricsIndex::default(),
-                emitted: HashMap::new(),
+                dedupe,
+                refine: refine_tx,
                 step_ms,
                 infer_ewma,
                 base_step,
@@ -233,11 +346,15 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
         device: capture.device_name.clone(),
         sample_rate: capture.sample_rate,
         model: cfg.model_name,
+        refine_model,
         backend: backend.into(),
         step_ms: cfg.step_ms,
     };
     log::info!("pipeline started: {info:?}");
-    Ok(PipelineHandle { stop, capture: Some(capture), threads: vec![dsp, asr], info })
+    // Joined in order: DSP ends, then the live ASR thread (dropping the accuracy-pass sender),
+    // then the accuracy pass drains and ends.
+    let threads = [Some(dsp), Some(asr), refine_thread].into_iter().flatten().collect();
+    Ok(PipelineHandle { stop, capture: Some(capture), threads, info })
 }
 
 fn dsp_loop(
@@ -339,8 +456,9 @@ struct AsrWorker {
     parser: ReferenceParser,
     follower: Follower,
     lyrics: LyricsIndex,
-    /// reference key → (utterance, tentative, when)
-    emitted: HashMap<String, (u64, bool, Instant)>,
+    dedupe: Dedupe,
+    /// Finished sentences go here too, for the accuracy pass.
+    refine: Option<Sender<RefineJob>>,
     step_ms: Arc<AtomicU32>,
     infer_ewma: Arc<AtomicU32>,
     base_step: u32,
@@ -367,9 +485,25 @@ impl AsrWorker {
     }
 
     fn process(&mut self, engine: &mut WhisperEngine, job: Job) {
-        let opts = DecodeOptions { partial: !job.is_final, reduced_ctx: self.reduced_ctx };
+        let settings = self.app.state::<AppState>().settings.lock().clone();
+        // Hand a finished sentence to the accuracy pass first, so both decode in parallel.
+        // If it's busy, this sentence keeps the quick text (logged below).
+        let refining = job.is_final
+            && self.refine.as_ref().is_some_and(|tx| {
+                let refine_job = RefineJob { utterance: job.utterance, audio: job.audio.clone(), captured_at: job.captured_at };
+                match tx.try_send(refine_job) {
+                    Ok(()) => true,
+                    Err(TrySendError::Full(_)) => {
+                        log::debug!("accuracy pass busy; utterance {} keeps the quick text", job.utterance);
+                        false
+                    }
+                    Err(TrySendError::Disconnected(_)) => false,
+                }
+            });
+
+        let opts = DecodeOptions::live(!job.is_final, self.reduced_ctx);
         let t0 = Instant::now();
-        let transcript = match engine.transcribe(&job.audio, opts) {
+        let transcript = match engine.transcribe(&job.audio, opts, &whisper::live_prompt(&settings.vocabulary)) {
             Ok(t) => t,
             Err(e) => {
                 log::warn!("transcription failed: {e:#}");
@@ -396,6 +530,7 @@ impl AsrWorker {
                 confidence: transcript.confidence,
                 inference_ms,
                 audio_ms: (job.audio.len() * 1000 / SAMPLE_RATE) as u32,
+                refined: false,
             },
         );
         if transcript.text.is_empty() {
@@ -405,9 +540,9 @@ impl AsrWorker {
         // Cloned handle so `state` doesn't borrow `self` across the `&mut self` calls below.
         let app = self.app.clone();
         let state = app.state::<AppState>();
-        let settings = state.settings.lock().clone();
         let asr_factor = 0.7 + 0.3 * transcript.confidence.clamp(0.0, 1.0);
-        if job.is_final {
+        if job.is_final && !refining {
+            // With the accuracy pass on, the archive gets its (better) text instead.
             state.history.said(&transcript.text);
         }
 
@@ -437,7 +572,7 @@ impl AsrWorker {
             let live_song = live.slide.as_ref().and_then(|s| s.song.as_ref()).map(|p| p.song_id.clone());
             let found = self.lyrics.detect(&transcript.text).filter(|m| m.slide.song.as_ref().map(|p| &p.song_id) != live_song.as_ref());
             if let Some(m) = found {
-                if self.should_emit(&m.slide.id, job.utterance, false) {
+                if self.dedupe.should_emit(&m.slide.id, job.utterance, false) {
                     let confidence = m.score * asr_factor;
                     let clear_or_song = !live.blackout && (live.slide.is_none() || live_song.is_some());
                     let auto = settings.auto_project && confidence >= SONG_AUTO_THRESHOLD && clear_or_song;
@@ -463,81 +598,146 @@ impl AsrWorker {
             }
         }
 
-        let mut refs = self.parser.parse(&transcript.text, job.is_final, &self.v11n);
-        for r in &mut refs {
-            r.confidence *= asr_factor;
-        }
+        let refs = find_references(&mut self.parser, &self.bible, &self.v11n, &transcript.text, job.is_final, settings.quote_detection, asr_factor);
+        emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, job.utterance, job.captured_at);
+    }
+}
 
-        if refs.is_empty() && job.is_final && settings.quote_detection {
-            match quote::find_quotes(&self.bible, &transcript.text) {
-                Ok(hits) => refs.extend(hits.into_iter().map(|hit| ParsedRef {
-                    reference: hit.reference,
-                    confidence: hit.score * asr_factor,
-                    tentative: false,
-                    kind: RefKind::Quote,
-                    matched: hit.phrase,
-                })),
-                Err(e) => log::warn!("quote search failed: {e:#}"),
-            }
+/// References in a transcript: announced ("John 3:16") and, on finished sentences with nothing
+/// announced, quoted verses.
+#[allow(clippy::too_many_arguments)]
+fn find_references(
+    parser: &mut ReferenceParser,
+    bible: &BibleDb,
+    v11n: &Versification,
+    text: &str,
+    is_final: bool,
+    quote_detection: bool,
+    asr_factor: f32,
+) -> Vec<ParsedRef> {
+    let mut refs = parser.parse(text, is_final, v11n);
+    for r in &mut refs {
+        r.confidence *= asr_factor;
+    }
+    if refs.is_empty() && is_final && quote_detection {
+        match quote::find_quotes(bible, text) {
+            Ok(hits) => refs.extend(hits.into_iter().map(|hit| ParsedRef {
+                reference: hit.reference,
+                confidence: hit.score * asr_factor,
+                tentative: false,
+                kind: RefKind::Quote,
+                matched: hit.phrase,
+            })),
+            Err(e) => log::warn!("quote search failed: {e:#}"),
         }
+    }
+    refs
+}
 
-        for mut r in refs {
-            if !self.should_emit(&r.reference.key(), job.utterance, r.tentative) {
+/// Queue new references for the operator, projecting them when confident enough.
+#[allow(clippy::too_many_arguments)]
+fn emit_references(
+    app: &AppHandle,
+    state: &AppState,
+    settings: &crate::state::Settings,
+    bible: &BibleDb,
+    dedupe: &Dedupe,
+    refs: Vec<ParsedRef>,
+    utterance: u64,
+    captured_at: Instant,
+) {
+    for mut r in refs {
+        if !dedupe.should_emit(&r.reference.key(), utterance, r.tentative) {
+            continue;
+        }
+        let planned = state.plan.lock().contains(&r.reference);
+        if planned {
+            r.confidence = (r.confidence + PLAN_BOOST).min(0.99);
+        }
+        let slide = match build_slide(bible, &settings.translation, settings.secondary_translation.as_deref(), &r.reference) {
+            Ok(Some(s)) => s,
+            Ok(None) => continue,
+            Err(e) => {
+                log::warn!("slide lookup failed: {e:#}");
                 continue;
             }
-            let planned = state.plan.lock().contains(&r.reference);
-            if planned {
-                r.confidence = (r.confidence + PLAN_BOOST).min(0.99);
-            }
-            let slide = match build_slide(&self.bible, &settings.translation, settings.secondary_translation.as_deref(), &r.reference) {
-                Ok(Some(s)) => s,
-                Ok(None) => continue,
+        };
+        let threshold = if r.kind == RefKind::Quote { QUOTE_AUTO_THRESHOLD } else { settings.auto_threshold };
+        let auto = settings.auto_project && !r.tentative && r.confidence >= threshold;
+        let auto_projected = auto && state.presenter.present(app, slide.clone());
+        if !r.tentative {
+            state.history.detected(&slide, r.kind.name(), r.confidence, &r.matched);
+            state.remember(&slide);
+        }
+        let _ = app.emit(
+            events::DETECTION,
+            DetectionEvent {
+                id: format!("{}:{}", utterance, r.reference.key()),
+                utterance_id: utterance,
+                kind: r.kind,
+                confidence: r.confidence,
+                tentative: r.tentative,
+                matched: r.matched,
+                slide,
+                auto_projected,
+                planned,
+                latency_ms: captured_at.elapsed().as_secs_f32() * 1000.0,
+            },
+        );
+    }
+}
+
+/// Re-transcribes each finished sentence with the accuracy model (beam search, full context,
+/// Bible-vocabulary prompt), replaces the quick text, archives it, and reports references the
+/// quick pass missed. Live updates never wait for it.
+struct RefineWorker {
+    app: AppHandle,
+    bible: BibleDb,
+    v11n: Arc<Versification>,
+    parser: ReferenceParser,
+    dedupe: Dedupe,
+    opts: DecodeOptions,
+}
+
+impl RefineWorker {
+    fn run(&mut self, engine: &mut WhisperEngine, jobs: Receiver<RefineJob>) {
+        let books: Vec<&str> = books::BOOKS.iter().map(|b| b.display).collect();
+        while let Ok(job) = jobs.recv() {
+            let app = self.app.clone();
+            let state = app.state::<AppState>();
+            let settings = state.settings.lock().clone();
+            let planned: Vec<String> = state.plan.lock().refs.iter().map(|r| r.label()).collect();
+            let prompt = whisper::accurate_prompt(&settings.vocabulary, &planned, &books);
+
+            let t0 = Instant::now();
+            let transcript = match engine.transcribe(&job.audio, self.opts, &prompt) {
+                Ok(t) => t,
                 Err(e) => {
-                    log::warn!("slide lookup failed: {e:#}");
+                    log::warn!("accuracy pass failed: {e:#}");
                     continue;
                 }
             };
-            let threshold = if r.kind == RefKind::Quote { QUOTE_AUTO_THRESHOLD } else { settings.auto_threshold };
-            let auto = settings.auto_project && !r.tentative && r.confidence >= threshold;
-            let auto_projected = auto && state.presenter.present(&app, slide.clone());
-            if !r.tentative {
-                state.history.detected(&slide, r.kind.name(), r.confidence, &r.matched);
-                state.remember(&slide);
-            }
-
-            let _ = self.app.emit(
-                events::DETECTION,
-                DetectionEvent {
-                    id: format!("{}:{}", job.utterance, r.reference.key()),
+            let inference_ms = t0.elapsed().as_secs_f32() * 1000.0;
+            log::debug!("accuracy pass: {:.0} ms for {:.1} s", inference_ms, job.audio.len() as f32 / SAMPLE_RATE as f32);
+            let _ = app.emit(
+                events::TRANSCRIPT,
+                TranscriptEvent {
                     utterance_id: job.utterance,
-                    kind: r.kind,
-                    confidence: r.confidence,
-                    tentative: r.tentative,
-                    matched: r.matched,
-                    slide,
-                    auto_projected,
-                    planned,
-                    latency_ms: job.captured_at.elapsed().as_secs_f32() * 1000.0,
+                    text: transcript.text.clone(),
+                    is_final: true,
+                    confidence: transcript.confidence,
+                    inference_ms,
+                    audio_ms: (job.audio.len() * 1000 / SAMPLE_RATE) as u32,
+                    refined: true,
                 },
             );
+            if transcript.text.is_empty() {
+                continue;
+            }
+            state.history.said(&transcript.text);
+            let asr_factor = 0.7 + 0.3 * transcript.confidence.clamp(0.0, 1.0);
+            let refs = find_references(&mut self.parser, &self.bible, &self.v11n, &transcript.text, true, settings.quote_detection, asr_factor);
+            emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, job.utterance, job.captured_at);
         }
-    }
-
-    /// Emit a reference once per utterance (plus one tentative→confirmed upgrade),
-    /// and not again across utterances within the dedupe window.
-    fn should_emit(&mut self, key: &str, utterance: u64, tentative: bool) -> bool {
-        let key = key.to_owned();
-        let emit = match self.emitted.get(&key) {
-            None => true,
-            Some(&(utt, was_tentative, _)) if utt == utterance => was_tentative && !tentative,
-            Some(&(_, _, at)) => at.elapsed() > DEDUPE_WINDOW,
-        };
-        if emit {
-            self.emitted.insert(key, (utterance, tentative, Instant::now()));
-        }
-        if self.emitted.len() > 512 {
-            self.emitted.retain(|_, (_, _, at)| at.elapsed() < DEDUPE_WINDOW);
-        }
-        emit
     }
 }
