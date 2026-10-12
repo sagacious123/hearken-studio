@@ -145,6 +145,7 @@ export function ControlBar() {
 
       <div className="ml-auto flex items-center gap-2">
         <button
+          data-style-toggle
           onClick={() => s.setStyleOpen(!s.styleOpen)}
           className={`rounded px-3 py-1 font-medium ${s.styleOpen ? "bg-amber-600 hover:bg-amber-500" : "bg-zinc-700 hover:bg-zinc-600"}`}
           title="Fonts, colours and backgrounds"

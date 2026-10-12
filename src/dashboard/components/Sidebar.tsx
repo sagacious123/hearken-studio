@@ -28,7 +28,7 @@ export function Sidebar() {
   };
 
   return (
-    <section className="flex min-h-0 flex-col bg-zinc-950">
+    <section className="flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-zinc-950">
       <nav className="flex h-10 flex-none border-b border-zinc-800 px-2 text-xs font-semibold uppercase tracking-wider">
         {TABS.map((t) => (
           <button

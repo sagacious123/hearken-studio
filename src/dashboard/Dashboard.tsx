@@ -57,13 +57,7 @@ function useKeyboardShortcuts() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t.closest("input, textarea, select, [contenteditable]")) return;
-      const { goLive, live, styleOpen, setStyleOpen } = useDashboard.getState();
-      // With the Style drawer open, Esc closes it rather than clearing the screen.
-      if (styleOpen && e.key === "Escape") {
-        setStyleOpen(false);
-        e.preventDefault();
-        return;
-      }
+      const { goLive, live } = useDashboard.getState();
       switch (e.key) {
         case "Enter":
           void goLive();

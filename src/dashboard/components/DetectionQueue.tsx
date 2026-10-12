@@ -9,7 +9,7 @@ export function DetectionQueue() {
   const followLatest = useDashboard((s) => s.followLatest);
 
   return (
-    <section className="flex min-h-0 flex-col bg-zinc-950">
+    <section className="flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-zinc-950">
       <PanelHeader title="Detections">
         <label className="flex items-center gap-1.5 font-normal normal-case tracking-normal">
           <input

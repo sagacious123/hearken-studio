@@ -18,7 +18,9 @@ export function PreviewPane() {
   const previewTheme = draftTheme ?? theme;
 
   return (
-    <section className="flex min-h-0 flex-col overflow-y-auto bg-zinc-950">
+    // min-w-0 + overflow-x-hidden: this column scrolls vertically only, even where WebKit's
+    // always-visible scrollbar would leave a few pixels of sideways overflow.
+    <section data-preview-column className="flex min-h-0 min-w-0 flex-col overflow-y-auto overflow-x-hidden bg-zinc-950 [scrollbar-gutter:stable]">
       <SearchBox />
       <PassagePicker />
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { api, events, type ModelStatus } from "../../lib/ipc";
 import { useDashboard } from "../store";
+import { useDismiss } from "../useDismiss";
 
 type Progress = Record<string, { received: number; total: number; phase: "download" | "testing" }>;
 
@@ -15,6 +16,7 @@ export function AccuracyButton() {
     useShallow((s) => ({ settings: s.settings, saveSettings: s.saveSettings, running: s.running, info: s.info, profile: s.profile })),
   );
   const [open, setOpen] = useState(false);
+  const rootRef = useDismiss<HTMLDivElement>(open, () => setOpen(false));
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [progress, setProgress] = useState<Progress>({});
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +57,7 @@ export function AccuracyButton() {
   };
 
   return (
-    <div className="relative">
+    <div ref={rootRef} className="relative">
       <button
         onClick={() => setOpen(!open)}
         className={`rounded px-3 py-1 font-medium ${open ? "bg-emerald-700 hover:bg-emerald-600" : "bg-zinc-700 hover:bg-zinc-600"}`}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type ShareInfo } from "../../lib/ipc";
 import { useDashboard } from "../store";
+import { useDismiss } from "../useDismiss";
 
 /**
  * Local-network sharing: congregation phones (QR code), a livestream overlay for OBS/vMix,
@@ -11,6 +12,7 @@ export function ShareButton() {
   const qrLive = useDashboard((s) => !!s.live?.qr);
   const saveSettings = useDashboard((s) => s.saveSettings);
   const [open, setOpen] = useState(false);
+  const rootRef = useDismiss<HTMLDivElement>(open, () => setOpen(false));
   const [info, setInfo] = useState<ShareInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +31,7 @@ export function ShareButton() {
   };
 
   return (
-    <div className="relative">
+    <div ref={rootRef} className="relative">
       <button
         onClick={() => setOpen(!open)}
         className={`rounded px-3 py-1 font-medium ${info?.enabled || enabled ? "bg-sky-700 hover:bg-sky-600" : "bg-zinc-700 hover:bg-zinc-600"}`}

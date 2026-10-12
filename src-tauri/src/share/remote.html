@@ -12,24 +12,38 @@
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--ink); }
-  body { font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 16px; padding-top: max(16px, env(safe-area-inset-top)); }
+  body { font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-text-size-adjust: 100%;
+         padding: max(12px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
   h1 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 8px; }
-  .live { background: var(--panel); border: 2px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; min-height: 56px; }
+  /* Live status and controls stay in reach while the list scrolls under them. */
+  .top { position: sticky; top: 0; z-index: 1; background: var(--bg); margin: 0 -14px; padding: 4px 14px 12px; }
+  .live { background: var(--panel); border: 2px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; min-height: 52px;
+          overflow-wrap: anywhere; }
   .live.on { border-color: var(--live); }
   .live b { font-size: 18px; }
   .live .tag { font-size: 12px; color: var(--muted); }
-  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px; }
+  .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   button { font: inherit; font-weight: 600; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
            border-radius: 10px; padding: 14px; touch-action: manipulation; }
   button:active { transform: scale(.98); }
   .wide { grid-column: span 2; }
   .black.on { background: var(--ink); color: var(--bg); }
-  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
-  li { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; }
+  .list { margin-top: 12px; }
+  /* minmax(0, 1fr): a grid column otherwise grows to its widest content, and one long verse
+     line widened the whole page past the phone's width. */
+  ul { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  li { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; }
   li div { flex: 1; min-width: 0; }
-  li .t { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  li b { overflow-wrap: anywhere; }
+  li .t { color: var(--muted); font-size: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   li .k { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
-  li button { padding: 10px 14px; background: var(--live); color: #fff; border: 0; }
+  li button { flex: none; min-height: 44px; min-width: 64px; padding: 10px 14px; background: var(--live); color: #fff; border: 0; }
+  /* Phones on their side: controls on the left, list on the right. */
+  @media (orientation: landscape) and (min-width: 600px) {
+    .layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 16px; align-items: start; }
+    .top { margin: 0; padding: 0; }
+    .list { margin-top: 0; }
+  }
   .pin { max-width: 320px; margin: 20vh auto 0; text-align: center; }
   .pin input { font: 600 32px/1 ui-monospace, monospace; letter-spacing: .4em; text-align: center; width: 100%; padding: 12px;
                border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); margin: 12px 0; }
@@ -72,18 +86,24 @@
 
   function render(s) {
     app.innerHTML = `
-      <h1>Live</h1>
-      <div class="live ${s.live && !s.blackout ? "on" : ""}">${s.live ? `<b>${esc(s.live)}</b>` : '<span class="tag">Nothing on screen</span>'}
-        ${s.blackout ? '<div class="tag">Blacked out</div>' : ""}</div>
-      <div class="controls">
-        <button data-a="prev">◀ Previous</button><button data-a="next">Next ▶</button>
-        <button data-a="blackout" class="black ${s.blackout ? "on" : ""}">${s.blackout ? "Unblack" : "Blackout"}</button>
-        <button data-a="clear">Clear</button>
-      </div>
-      <h1>Detected & planned</h1>
-      ${s.items.length ? "<ul>" + s.items.map(i => `<li><div><div class="k">${esc(i.kind)}</div><b>${esc(i.label)}</b>
-        <div class="t">${esc(i.text)}</div></div><button data-id="${esc(i.id)}">Show</button></li>`).join("") + "</ul>"
-        : '<p class="empty">References appear here as they are spoken.</p>'}`;
+      <div class="layout">
+      <section class="top">
+        <h1>Live</h1>
+        <div class="live ${s.live && !s.blackout ? "on" : ""}">${s.live ? `<b>${esc(s.live)}</b>` : '<span class="tag">Nothing on screen</span>'}
+          ${s.blackout ? '<div class="tag">Blacked out</div>' : ""}</div>
+        <div class="controls">
+          <button data-a="prev">◀ Previous</button><button data-a="next">Next ▶</button>
+          <button data-a="blackout" class="black ${s.blackout ? "on" : ""}">${s.blackout ? "Unblack" : "Blackout"}</button>
+          <button data-a="clear">Clear</button>
+        </div>
+      </section>
+      <section class="list">
+        <h1>Detected & planned</h1>
+        ${s.items.length ? "<ul>" + s.items.map(i => `<li><div><div class="k">${esc(i.kind)}</div><b>${esc(i.label)}</b>
+          <div class="t">${esc(i.text)}</div></div><button data-id="${esc(i.id)}">Show</button></li>`).join("") + "</ul>"
+          : '<p class="empty">References appear here as they are spoken.</p>'}
+      </section>
+      </div>`;
   }
 
   app.addEventListener("click", async e => {

@@ -32,7 +32,7 @@ export function TranscriptPanel() {
 
 export function PanelHeader({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
-    <div className="flex h-10 flex-none items-center justify-between border-b border-zinc-800 px-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">
+    <div className="flex min-h-10 flex-none flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-zinc-800 px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">
       {title}
       {children}
     </div>

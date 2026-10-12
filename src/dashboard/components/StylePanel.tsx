@@ -4,6 +4,7 @@ import { forgetUpload, SAMPLES } from "../../lib/backgrounds";
 import { api, type UploadedBackground } from "../../lib/ipc";
 import { DEFAULT_THEME, FONTS, parseTheme, parseThemeJson, PRESETS, type Theme } from "../../lib/theme";
 import { useDashboard } from "../store";
+import { useDismiss } from "../useDismiss";
 
 const WEIGHTS: [number, string][] = [
   [300, "Light"],
@@ -28,6 +29,7 @@ export function StyleDrawer() {
   const draft = useDashboard((s) => s.draftTheme);
   const setDraft = useDashboard((s) => s.setDraftTheme);
   const theme = draft ?? parseTheme(liveTheme);
+  const drawerRef = useDismiss<HTMLElement>(open, () => setOpen(false), ["[data-preview-column]", "[data-style-toggle]"]);
 
   /** Copy, change, validate; the draft is always a well-formed theme. */
   const edit = (change: (t: Theme) => void) => {
@@ -38,6 +40,7 @@ export function StyleDrawer() {
 
   return (
     <aside
+      ref={drawerRef}
       aria-label="Style"
       inert={!open}
       className={`absolute inset-y-0 left-0 z-30 flex w-[26rem] max-w-[calc(100%-26rem)] flex-col bg-zinc-950 shadow-2xl ring-1 ring-zinc-800 transition-transform duration-200 ease-out motion-reduce:transition-none ${
