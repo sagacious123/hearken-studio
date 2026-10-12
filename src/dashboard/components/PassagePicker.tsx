@@ -125,7 +125,7 @@ export function PassagePicker() {
     else void submit(false);
   };
 
-  const num = "w-14 rounded-md bg-zinc-900 px-2 py-1.5 text-sm tabular-nums outline-none ring-1 ring-zinc-800 focus:ring-amber-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none";
+  const num = "w-12 rounded-md bg-zinc-900 px-2 py-1.5 text-sm tabular-nums outline-none ring-1 ring-zinc-800 focus:ring-amber-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none";
   const rangeLong = from && to && vTo - vFrom + 1 > MAX_SLIDE_VERSES;
 
   return (
@@ -228,7 +228,7 @@ function BookCombobox({ books, value, onPick }: { books: BookInfo[]; value: Book
   };
 
   return (
-    <div className="relative min-w-0 flex-1 basis-40">
+    <div className="relative min-w-0 flex-1 basis-32">
       <input
         role="combobox"
         aria-expanded={open}

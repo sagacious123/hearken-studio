@@ -34,13 +34,11 @@ export function PreviewPane() {
         </button>
       </PanelHeader>
       <DraftBar />
-      <div className="aspect-video flex-none p-3">
-        <div className={`h-full overflow-hidden rounded-md ring-1 ${draftTheme ? "ring-amber-500" : "ring-zinc-800"}`}>
-          <Stage background={previewTheme.background.color}>
-            <SlideView slide={preview ?? (draftTheme ? SAMPLE_SLIDE : null)} theme={previewTheme} blackout={false} />
-          </Stage>
-        </div>
-      </div>
+      <StageBox ring={`ring-1 ${draftTheme ? "ring-amber-500" : "ring-zinc-800"}`}>
+        <Stage background={previewTheme.background.color}>
+          <SlideView slide={preview ?? (draftTheme ? SAMPLE_SLIDE : null)} theme={previewTheme} blackout={false} />
+        </Stage>
+      </StageBox>
 
       <PanelHeader title={live?.blackout ? "Live — BLACKOUT" : "Live"}>
         <div className="flex gap-1 normal-case tracking-normal">
@@ -50,15 +48,28 @@ export function PreviewPane() {
           <Btn onClick={() => api.clearOutput()}>Clear (Esc)</Btn>
         </div>
       </PanelHeader>
-      <div className="aspect-video flex-none p-3">
-        <div className={`h-full overflow-hidden rounded-md ring-2 ${live?.slide ? "ring-red-600" : "ring-zinc-800"}`}>
-          <Stage background={theme.background.color}>
-            <SlideView slide={live?.slide ?? null} theme={theme} blackout={live?.blackout ?? false} reading={live?.reading} qr={live?.qr} />
-          </Stage>
-        </div>
-      </div>
+      <StageBox ring={`ring-2 ${live?.slide ? "ring-red-600" : "ring-zinc-800"}`}>
+        <Stage background={theme.background.color}>
+          <SlideView slide={live?.slide ?? null} theme={theme} blackout={live?.blackout ?? false} reading={live?.reading} qr={live?.qr} />
+        </Stage>
+      </StageBox>
 
     </section>
+  );
+}
+
+/**
+ * A 16:9 preview box as wide as the column. The width comes first (block layout) and the
+ * height follows from it: with aspect-ratio on a flex item, WebKit sized these boxes from their
+ * height instead and made them 47 px wider than the column.
+ */
+function StageBox({ ring, children }: { ring: string; children: React.ReactNode }) {
+  return (
+    <div className="flex-none p-3">
+      <div className={`relative aspect-video w-full overflow-hidden rounded-md ${ring}`}>
+        <div className="absolute inset-0">{children}</div>
+      </div>
+    </div>
   );
 }
 
