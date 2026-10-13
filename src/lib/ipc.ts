@@ -62,7 +62,7 @@ export interface TranscriptEvent {
   refined: boolean;
 }
 
-export type DetectionKind = "explicit" | "contextual" | "quote" | "song";
+export type DetectionKind = "explicit" | "contextual" | "quote" | "song" | "meaning";
 
 export interface Detection {
   id: string;
@@ -106,6 +106,8 @@ export interface Settings {
   gpuOverride: boolean | null;
   reducedEncoderCtx: boolean;
   quoteDetection: boolean;
+  /** Suggest verses said in other words (needs the search-by-meaning model). */
+  meaningDetection: boolean;
   secondaryTranslation: string | null;
   followReading: boolean;
   lyricsDetection: boolean;
@@ -209,7 +211,15 @@ export interface BookInfo {
 export interface SearchResponse {
   reference: Slide | null;
   hits: Slide[];
+  /** Verses saying the same thing in other words (search by meaning). */
+  meaning: Slide[];
   elapsedMs: number;
+}
+
+export interface MeaningStatus {
+  installed: boolean;
+  ready: boolean;
+  downloadMb: number;
 }
 
 export interface UploadedBackground {
@@ -286,6 +296,9 @@ export const api = {
   startPipeline: () => invoke<PipelineInfo>("start_pipeline"),
   stopPipeline: () => invoke<void>("stop_pipeline"),
   listTranslations: () => invoke<Translation[]>("list_translations"),
+  meaningStatus: () => invoke<MeaningStatus>("meaning_status"),
+  downloadMeaningModel: () => invoke<MeaningStatus>("download_meaning_model"),
+  removeMeaningModel: () => invoke<MeaningStatus>("remove_meaning_model"),
   listLibrary: () => invoke<LibraryItem[]>("list_library"),
   installTranslation: (code: string) => invoke<Translation[]>("install_translation", { code }),
   removeTranslation: (code: string) => invoke<Translation[]>("remove_translation", { code }),
@@ -346,6 +359,7 @@ export const events = {
   pipelineWarning: on<string>("pipeline://warning"),
   outputState: on<OutputState>("output://state"),
   hardwareProgress: on<string>("hardware://progress"),
+  meaningProgress: on<{ received: number; total: number }>("meaning://progress"),
   libraryProgress: on<{ code: string; fraction: number }>("library://progress"),
   modelProgress: on<{ id: string; received: number; total: number; phase: "download" | "testing" }>("models://progress"),
 };

@@ -53,7 +53,9 @@ use crate::{
     scripture::{
         build_slide,
         parser::{ParsedRef, RefKind, ReferenceParser},
-        books, quote, BibleDb, Slide, Versification,
+        books,
+        meaning::{self, Meaning},
+        quote, BibleDb, Slide, Versification,
     },
     state::AppState,
 };
@@ -602,7 +604,8 @@ impl AsrWorker {
             }
         }
 
-        let refs = find_references(&mut self.parser, &self.bible, &self.v11n, &transcript.text, job.is_final, settings.quote_detection, asr_factor);
+        let meaning = settings.meaning_detection.then(|| state.meaning.lock().clone()).flatten();
+        let refs = find_references(&mut self.parser, &self.bible, &self.v11n, &transcript.text, job.is_final, settings.quote_detection, meaning.as_deref(), asr_factor);
         emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, job.utterance, job.captured_at);
     }
 }
@@ -617,6 +620,7 @@ fn find_references(
     text: &str,
     is_final: bool,
     quote_detection: bool,
+    meaning: Option<&Meaning>,
     asr_factor: f32,
 ) -> Vec<ParsedRef> {
     let mut refs = parser.parse(text, is_final, v11n);
@@ -634,6 +638,16 @@ fn find_references(
             })),
             Err(e) => log::warn!("quote search failed: {e:#}"),
         }
+    }
+    // Nothing said or quoted word for word: a verse said in other words?
+    if let Some(hit) = meaning.filter(|_| refs.is_empty() && is_final).and_then(|m| m.live_hit(text)) {
+        refs.push(ParsedRef {
+            reference: hit.reference,
+            confidence: meaning::confidence(hit.score) * asr_factor,
+            tentative: false,
+            kind: RefKind::Meaning,
+            matched: text.trim().to_owned(),
+        });
     }
     refs
 }
@@ -666,7 +680,11 @@ fn emit_references(
                 continue;
             }
         };
-        let threshold = if r.kind == RefKind::Quote { QUOTE_AUTO_THRESHOLD } else { settings.auto_threshold };
+        let threshold = match r.kind {
+            RefKind::Quote => QUOTE_AUTO_THRESHOLD,
+            RefKind::Meaning => f32::INFINITY, // a suggestion for the operator, never projected by itself
+            _ => settings.auto_threshold,
+        };
         let auto = settings.auto_project && !r.tentative && r.confidence >= threshold;
         let auto_projected = auto && state.presenter.present(app, slide.clone());
         if !r.tentative {
@@ -740,7 +758,8 @@ impl RefineWorker {
             }
             state.history.said(&transcript.text);
             let asr_factor = 0.7 + 0.3 * transcript.confidence.clamp(0.0, 1.0);
-            let refs = find_references(&mut self.parser, &self.bible, &self.v11n, &transcript.text, true, settings.quote_detection, asr_factor);
+            let meaning = settings.meaning_detection.then(|| state.meaning.lock().clone()).flatten();
+            let refs = find_references(&mut self.parser, &self.bible, &self.v11n, &transcript.text, true, settings.quote_detection, meaning.as_deref(), asr_factor);
             emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, job.utterance, job.captured_at);
         }
     }

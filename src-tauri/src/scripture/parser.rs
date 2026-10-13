@@ -28,6 +28,8 @@ pub enum RefKind {
     Quote,
     /// An imported worship song recognised from the singing
     Song,
+    /// A verse said in other words, found by meaning
+    Meaning,
 }
 
 impl RefKind {
@@ -37,6 +39,7 @@ impl RefKind {
             RefKind::Contextual => "contextual",
             RefKind::Quote => "quote",
             RefKind::Song => "song",
+            RefKind::Meaning => "meaning",
         }
     }
 }

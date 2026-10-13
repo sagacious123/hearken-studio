@@ -99,6 +99,11 @@ function SearchBox() {
   }, [query, translation]);
 
   const items: Slide[] = result ? [...(result.reference ? [result.reference] : []), ...result.hits] : [];
+  const byMeaning = result?.meaning ?? [];
+  const pick = (s: Slide) => {
+    setPreview(s);
+    setQuery("");
+  };
 
   return (
     <div className="relative flex-none p-3 pb-2">
@@ -106,35 +111,41 @@ function SearchBox() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && items[0]) {
-            setPreview(items[0]);
-            setQuery("");
-          }
+          const first = items[0] ?? byMeaning[0];
+          if (e.key === "Enter" && first) pick(first);
           if (e.key === "Escape") setQuery("");
         }}
-        placeholder="Search: “jn 3 16”, “rom 8:28-30” or words “love is patient”"
+        placeholder="Search: “jn 3 16”, “love is patient” or “don't worry about tomorrow”"
         className="w-full rounded-md bg-zinc-900 px-3 py-2 text-sm outline-none ring-1 ring-zinc-800 focus:ring-amber-500"
       />
       {result && (
         <ul className="absolute inset-x-3 top-full z-10 mt-1 max-h-80 overflow-y-auto rounded-md bg-zinc-900 shadow-xl ring-1 ring-zinc-700">
-          {items.length === 0 && <li className="px-3 py-2 text-sm text-zinc-500">No matches</li>}
+          {items.length === 0 && byMeaning.length === 0 && <li className="px-3 py-2 text-sm text-zinc-500">No matches</li>}
           {items.map((s, i) => (
-            <li
-              key={s.id + i}
-              onClick={() => {
-                setPreview(s);
-                setQuery("");
-              }}
-              className="cursor-pointer px-3 py-2 text-sm hover:bg-zinc-800"
-            >
-              <span className="font-semibold text-amber-400">{s.label}</span>{" "}
-              <span className="text-zinc-400">{s.verses[0]?.text}</span>
-            </li>
+            <SearchItem key={s.id + i} slide={s} onPick={pick} />
           ))}
+          {byMeaning.length > 0 && (
+            <>
+              <li className="border-t border-zinc-800 px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-sky-400" title="Verses that say the same thing in other words">
+                By meaning
+              </li>
+              {byMeaning.map((s, i) => (
+                <SearchItem key={"m" + s.id + i} slide={s} onPick={pick} />
+              ))}
+            </>
+          )}
           <li className="px-3 py-1 text-right font-mono text-[10px] text-zinc-600">{result.elapsedMs.toFixed(2)} ms</li>
         </ul>
       )}
     </div>
+  );
+}
+
+function SearchItem({ slide, onPick }: { slide: Slide; onPick: (s: Slide) => void }) {
+  return (
+    <li onClick={() => onPick(slide)} className="cursor-pointer px-3 py-2 text-sm hover:bg-zinc-800">
+      <span className="font-semibold text-amber-400">{slide.label}</span> <span className="text-zinc-400">{slide.verses[0]?.text}</span>
+    </li>
   );
 }
 

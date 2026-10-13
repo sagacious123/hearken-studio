@@ -26,6 +26,7 @@ pub mod events {
     pub const HARDWARE_PROGRESS: &str = "hardware://progress";
     pub const MODEL_PROGRESS: &str = "models://progress";
     pub const LIBRARY_PROGRESS: &str = "library://progress";
+    pub const MEANING_PROGRESS: &str = "meaning://progress";
 }
 
 pub fn run() {
@@ -38,6 +39,7 @@ pub fn run() {
             let state = state::AppState::initialize(app.handle())?;
             app.manage(state);
             let handle = app.handle().clone();
+            state::AppState::load_meaning(&handle);
             if let Err(e) = commands::apply_sharing(&handle, &handle.state::<state::AppState>()) {
                 log::warn!("local sharing not started: {e}");
             }
@@ -92,6 +94,9 @@ pub fn run() {
             commands::get_insights,
             commands::export_recap,
             commands::list_library,
+            commands::meaning_status,
+            commands::download_meaning_model,
+            commands::remove_meaning_model,
             commands::install_translation,
             commands::remove_translation,
             commands::export_ccli_report,

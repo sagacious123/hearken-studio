@@ -2,6 +2,7 @@ pub mod books;
 pub mod db;
 pub mod fuzzy;
 pub mod library;
+pub mod meaning;
 pub mod numbers;
 pub mod parser;
 pub mod quote;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, events, type ModelStatus } from "../../lib/ipc";
+import { api, events, type MeaningStatus, type ModelStatus } from "../../lib/ipc";
 import { useDashboard } from "../store";
 import { useDismiss } from "../useDismiss";
 
@@ -182,6 +182,8 @@ export function AccuracyButton() {
             {error && <p className="text-xs text-red-400">{error}</p>}
           </div>
 
+          <MeaningSection />
+
           <label className="block space-y-1.5">
             <span className="text-xs font-semibold text-zinc-400">Names and words to listen for</span>
             <textarea
@@ -201,6 +203,74 @@ export function AccuracyButton() {
           <p className="text-xs text-zinc-500">{running ? "Model changes apply the next time you start listening. Vocabulary applies right away." : "Changes apply when you start listening."}</p>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Search by meaning: verses said in other words, live and in the search box. */
+function MeaningSection() {
+  const enabled = useDashboard((s) => s.settings?.meaningDetection ?? true);
+  const saveSettings = useDashboard((s) => s.saveSettings);
+  const [status, setStatus] = useState<MeaningStatus | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.meaningStatus().then(setStatus).catch((e) => setError(String(e)));
+    const off = events.meaningProgress((p) => setProgress(p.received / Math.max(p.total, 1)));
+    return () => void off.then((f) => f());
+  }, []);
+
+  const download = async () => {
+    setError(null);
+    setProgress(0);
+    try {
+      setStatus(await api.downloadMeaningModel());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  return (
+    <div className="space-y-1.5 rounded-md bg-zinc-950 p-3 ring-1 ring-zinc-800">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-semibold text-zinc-300">Verses said in other words</span>
+        {status?.installed && (
+          <label className="ml-auto flex items-center gap-1.5 text-xs text-zinc-400">
+            <input type="checkbox" checked={enabled} onChange={(e) => void saveSettings({ meaningDetection: e.target.checked })} className="accent-emerald-500" />
+            Suggest live
+          </label>
+        )}
+      </div>
+      <p className="text-xs text-zinc-500">
+        Finds the verse when someone paraphrases it (“don't worry about tomorrow” → Matthew 6:34), live as a suggestion and under “By meaning” in the
+        search box. Works offline once downloaded.
+      </p>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      {progress !== null ? (
+        <div className="flex items-center gap-2">
+          <div className="h-1.5 flex-1 overflow-hidden rounded bg-zinc-800">
+            <div className="h-full bg-emerald-500 transition-[width]" style={{ width: `${Math.round(progress * 100)}%` }} />
+          </div>
+          <span className="w-16 text-right font-mono text-[11px] text-zinc-400">{progress >= 1 ? "Loading…" : `${Math.round(progress * 100)}%`}</span>
+        </div>
+      ) : status && !status.installed ? (
+        <button onClick={() => void download()} className="rounded bg-emerald-700 px-2 py-1 text-xs font-medium hover:bg-emerald-600">
+          Download ({Math.round(status.downloadMb)} MB)
+        </button>
+      ) : status?.installed ? (
+        <p className="flex items-center gap-2 text-xs text-zinc-400">
+          {status.ready ? "Ready." : "Loading…"}
+          <button
+            onClick={() => void api.removeMeaningModel().then(setStatus).catch((e) => setError(String(e)))}
+            className="ml-auto text-zinc-500 underline-offset-2 hover:text-zinc-200 hover:underline"
+          >
+            Remove
+          </button>
+        </p>
+      ) : null}
     </div>
   );
 }

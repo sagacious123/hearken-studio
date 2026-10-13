@@ -2,7 +2,7 @@ import type { Detection } from "../../lib/ipc";
 import { useDashboard } from "../store";
 import { PanelHeader } from "./TranscriptPanel";
 
-const KIND_LABEL = { explicit: "Announced", contextual: "Follow-up", quote: "Quoted", song: "Song" } as const;
+const KIND_LABEL = { explicit: "Announced", contextual: "Follow-up", quote: "Quoted", song: "Song", meaning: "Same meaning" } as const;
 
 export function DetectionQueue() {
   const queue = useDashboard((s) => s.queue);

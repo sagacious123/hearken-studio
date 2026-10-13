@@ -174,6 +174,19 @@ impl BibleDb {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Every verse of a translation, in canon order (for building the search-by-meaning index).
+    pub fn all_verses(&self, translation: &str) -> Result<Vec<(ScriptureRef, String)>> {
+        let tid = self.translation_id(translation)?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT book_id, chapter, verse, text FROM {}.verses WHERE translation_id = ?1 ORDER BY book_id, chapter, verse",
+            Self::schema(tid)
+        ))?;
+        let rows = stmt.query_map([tid], |r| {
+            Ok((ScriptureRef { book_id: r.get(0)?, chapter: r.get(1)?, verse_start: Some(r.get(2)?), verse_end: None }, r.get(3)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// FTS5 search over the bundled translations. `fts_query` must already be a safe FTS5
     /// expression (see `user_query`). `translation = None` searches every bundled translation —
     /// used by quote matching so that modern paraphrase can hit WEB while archaic phrasing hits

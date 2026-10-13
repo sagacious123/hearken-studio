@@ -39,6 +39,8 @@ pub struct Settings {
     pub reduced_encoder_ctx: bool,
     /// Layer-2 detection of verses read aloud without an announcement.
     pub quote_detection: bool,
+    /// Suggest verses said in other words (needs the search-by-meaning model).
+    pub meaning_detection: bool,
     /// Second translation shown side by side ("WEB" under "KJV", or "FRJ" for a French service).
     pub secondary_translation: Option<String>,
     /// Highlight the live passage as it is read and move to the next verse automatically.
@@ -73,6 +75,7 @@ impl Default for Settings {
             gpu_override: None,
             reduced_encoder_ctx: true,
             quote_detection: true,
+            meaning_detection: true,
             secondary_translation: None,
             follow_reading: true,
             lyrics_detection: true,
@@ -181,6 +184,8 @@ pub struct AppState {
     pub share: Share,
     /// Cancel flags of model downloads in progress, by model id.
     pub downloads: Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
+    /// Search by meaning, once its model is downloaded and loaded.
+    pub meaning: Mutex<Option<Arc<scripture::meaning::Meaning>>>,
 }
 
 impl AppState {
@@ -232,7 +237,26 @@ impl AppState {
             recent: Mutex::new(VecDeque::new()),
             share: Share::new(),
             downloads: Mutex::new(Default::default()),
+            meaning: Mutex::new(None),
         })
+    }
+
+    /// Load search by meaning in the background when its model is downloaded (well under a
+    /// second in release builds).
+    pub fn load_meaning(app: &AppHandle) {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let state = app.state::<AppState>();
+            let dir = state.paths.downloaded_models();
+            if !scripture::meaning::installed(&dir) {
+                return;
+            }
+            let loaded = BibleDb::open(&state.paths.bible_db).and_then(|db| scripture::meaning::Meaning::load(&dir, &db));
+            match loaded {
+                Ok(m) => *state.meaning.lock() = Some(Arc::new(m)),
+                Err(e) => log::warn!("search by meaning unavailable: {e:#}"),
+            }
+        });
     }
 
     /// Remember a confirmed detection for the phone remote (newest first, no duplicates).

@@ -353,6 +353,60 @@ pub async fn list_translations(state: State<'_, AppState>) -> CmdResult<Vec<Tran
     Ok(state.bible.lock().translations())
 }
 
+// ---------- search by meaning ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeaningStatus {
+    installed: bool,
+    /// Loaded and searchable (loading takes a moment after download or start-up).
+    ready: bool,
+    download_mb: f32,
+}
+
+#[tauri::command]
+pub async fn meaning_status(state: State<'_, AppState>) -> CmdResult<MeaningStatus> {
+    Ok(MeaningStatus {
+        installed: scripture::meaning::installed(&state.paths.downloaded_models()),
+        ready: state.meaning.lock().is_some(),
+        download_mb: scripture::meaning::DOWNLOAD_MB,
+    })
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MeaningProgress {
+    received: u64,
+    total: u64,
+}
+
+/// Download the search-by-meaning model (checksum-verified), then load it. Progress arrives as
+/// `meaning://progress` events.
+#[tauri::command]
+pub async fn download_meaning_model(app: AppHandle, state: State<'_, AppState>) -> CmdResult<MeaningStatus> {
+    let dir = state.paths.downloaded_models();
+    let bible_path = state.paths.bible_db.clone();
+    let app2 = app.clone();
+    let loaded = tauri::async_runtime::spawn_blocking(move || {
+        scripture::meaning::download(&dir, |received, total| {
+            let _ = app2.emit(events::MEANING_PROGRESS, MeaningProgress { received, total });
+        })?;
+        scripture::meaning::Meaning::load(&dir, &scripture::BibleDb::open(&bible_path)?)
+    })
+    .await
+    .map_err(err)?
+    .map_err(|e| format!("{e:#}"))?;
+    *state.meaning.lock() = Some(Arc::new(loaded));
+    meaning_status(state).await
+}
+
+#[tauri::command]
+pub async fn remove_meaning_model(state: State<'_, AppState>) -> CmdResult<MeaningStatus> {
+    *state.meaning.lock() = None;
+    scripture::meaning::remove(&state.paths.downloaded_models()).map_err(err)?;
+    meaning_status(state).await
+}
+
 // ---------- Bible library: more translations, downloaded on request ----------
 
 #[tauri::command]
@@ -417,6 +471,8 @@ pub struct SearchResponse {
     reference: Option<Slide>,
     /// Full-text matches, best first.
     hits: Vec<Slide>,
+    /// Verses saying the same thing in other words, best first (search by meaning).
+    meaning: Vec<Slide>,
     elapsed_ms: f32,
 }
 
@@ -439,7 +495,20 @@ pub async fn search_scripture(query: String, translation: String, state: State<'
             .collect(),
         None => vec![],
     };
-    Ok(SearchResponse { reference, hits, elapsed_ms: t0.elapsed().as_secs_f32() * 1000.0 })
+    // Whole phrases only (three words or more), and not when it's a reference.
+    let meaning_index = state.meaning.lock().clone();
+    let meaning = match meaning_index.filter(|_| reference.is_none() && query.split_whitespace().count() >= 3) {
+        Some(m) => m
+            .search(&query, 8)
+            .into_iter()
+            .filter(|h| h.score >= scripture::meaning::SEARCH_MIN_SCORE)
+            .filter(|h| !hits.iter().any(|s: &Slide| s.reference.book_id == h.reference.book_id && s.reference.chapter == h.reference.chapter && s.reference.verse_start == h.reference.verse_start))
+            .take(5)
+            .filter_map(|h| scripture::build_slide(&bible, &translation, secondary.as_deref(), &h.reference).ok().flatten())
+            .collect(),
+        None => vec![],
+    };
+    Ok(SearchResponse { reference, hits, meaning, elapsed_ms: t0.elapsed().as_secs_f32() * 1000.0 })
 }
 
 #[derive(Serialize)]
@@ -754,6 +823,7 @@ mod tests {
             recent: Mutex::new(Default::default()),
             share: Share::new(),
             downloads: Mutex::new(Default::default()),
+            meaning: Mutex::new(None),
         }
     }
 
