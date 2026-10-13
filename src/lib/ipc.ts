@@ -95,6 +95,13 @@ export interface PipelineInfo {
   refineModel: string | null;
 }
 
+/** An extra screen beside the main output. */
+export interface ScreenConfig {
+  look: "full" | "lower-third" | "stage";
+  key: "black" | "green" | "theme";
+  monitor: number | null;
+}
+
 export type RecapFormat = "pdf" | "docx" | "doc" | "html";
 
 export interface Settings {
@@ -108,6 +115,8 @@ export interface Settings {
   quoteDetection: boolean;
   /** Suggest verses said in other words (needs the search-by-meaning model). */
   meaningDetection: boolean;
+  /** Extra screens beside the main output (up to three). */
+  screens: ScreenConfig[];
   secondaryTranslation: string | null;
   followReading: boolean;
   lyricsDetection: boolean;
@@ -296,6 +305,9 @@ export const api = {
   startPipeline: () => invoke<PipelineInfo>("start_pipeline"),
   stopPipeline: () => invoke<void>("stop_pipeline"),
   listTranslations: () => invoke<Translation[]>("list_translations"),
+  openScreen: (n: number) => invoke<number[]>("open_screen", { n }),
+  closeScreen: (n: number) => invoke<number[]>("close_screen", { n }),
+  listOpenScreens: () => invoke<number[]>("list_open_screens"),
   meaningStatus: () => invoke<MeaningStatus>("meaning_status"),
   downloadMeaningModel: () => invoke<MeaningStatus>("download_meaning_model"),
   removeMeaningModel: () => invoke<MeaningStatus>("remove_meaning_model"),

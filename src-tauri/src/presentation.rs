@@ -158,10 +158,49 @@ pub fn list_monitors(app: &AppHandle) -> tauri::Result<Vec<MonitorInfo>> {
 /// Space and animates, which is unwanted live. On the operator's display (a laptop with no
 /// projector attached) it opens as an ordinary 16:9 window instead, so the dashboard stays usable.
 pub fn open_output(app: &AppHandle, monitor: Option<usize>) -> tauri::Result<()> {
-    let window = match app.get_webview_window(OUTPUT_LABEL) {
-        Some(w) => w,
-        None => WebviewWindowBuilder::new(app, OUTPUT_LABEL, WebviewUrl::App("output.html".into()))
-            .title("Hearken Studio Output")
+    open_window(app, OUTPUT_LABEL, "output.html", "Hearken Studio Output", monitor)
+}
+
+/// Extra screens beside the main output, each with its own look (see `ScreenConfig`).
+pub const MAX_EXTRA_SCREENS: usize = 3;
+
+pub fn screen_label(n: usize) -> String {
+    format!("output-{}", n + 2)
+}
+
+/// Open (or move, or switch the look of) extra screen `n` (0-based; shown as "Screen n+2").
+pub fn open_screen(app: &AppHandle, n: usize, look: &str, key: &str, monitor: Option<usize>) -> tauri::Result<()> {
+    let look = if matches!(look, "full" | "lower-third" | "stage") { look } else { "full" };
+    let key = if matches!(key, "black" | "green" | "theme") { key } else { "black" };
+    let url = format!("output.html?look={look}&key={key}");
+    open_window(app, &screen_label(n), &url, &format!("Hearken Studio Screen {}", n + 2), monitor)
+}
+
+pub fn close_screen(app: &AppHandle, n: usize) -> tauri::Result<()> {
+    if let Some(w) = app.get_webview_window(&screen_label(n)) {
+        w.close()?;
+    }
+    Ok(())
+}
+
+pub fn open_screens(app: &AppHandle) -> Vec<usize> {
+    (0..MAX_EXTRA_SCREENS).filter(|&n| app.get_webview_window(&screen_label(n)).is_some()).collect()
+}
+
+fn open_window(app: &AppHandle, label: &str, url: &str, title: &str, monitor: Option<usize>) -> tauri::Result<()> {
+    let window = match app.get_webview_window(label) {
+        Some(w) => {
+            // A different look: load it in place (the window keeps its display).
+            let query = url.split_once('?').map(|(_, q)| q);
+            let mut current = w.url()?;
+            if current.query() != query {
+                current.set_query(query);
+                w.navigate(current)?;
+            }
+            w
+        }
+        None => WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+            .title(title)
             .decorations(false)
             .resizable(false)
             .skip_taskbar(true)

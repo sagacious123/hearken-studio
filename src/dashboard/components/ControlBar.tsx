@@ -4,6 +4,7 @@ import { api, type DeviceInfo, type MonitorInfo } from "../../lib/ipc";
 import { useDashboard } from "../store";
 import { AccuracyButton } from "./AccuracyButton";
 import { BibleLibrary } from "./BibleLibrary";
+import { ScreensButton } from "./ScreensButton";
 import { ShareButton } from "./ShareButton";
 
 /** Device enumeration takes ~200–500 ms (off the UI thread), so don't repeat it within this. */
@@ -176,6 +177,7 @@ export function ControlBar() {
         <button onClick={() => api.closeOutputWindow()} className="rounded bg-zinc-700 px-3 py-1 hover:bg-zinc-600">
           Close
         </button>
+        <ScreensButton monitors={monitors} />
       </div>
     </header>
   );

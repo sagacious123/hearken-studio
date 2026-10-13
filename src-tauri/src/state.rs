@@ -22,6 +22,25 @@ use crate::{
 /// Detections kept for the phone remote's list.
 pub const RECENT_SLIDES: usize = 30;
 
+/// An extra screen beside the main output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ScreenConfig {
+    /// "full" (the main look), "lower-third" (livestream / video switcher) or "stage"
+    /// (confidence monitor for the preacher: large text and a clock).
+    pub look: String,
+    /// Lower third background: "black", "green" (for chroma keying) or "theme".
+    pub key: String,
+    /// Display index, as listed by the Output menu; `None` picks one.
+    pub monitor: Option<usize>,
+}
+
+impl Default for ScreenConfig {
+    fn default() -> Self {
+        Self { look: "stage".into(), key: "black".into(), monitor: None }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -62,6 +81,8 @@ pub struct Settings {
     pub accuracy_model: String,
     /// Names and words to listen for (pastors, the church, places), comma or line separated.
     pub vocabulary: String,
+    /// Extra screens beside the main output (up to three).
+    pub screens: Vec<ScreenConfig>,
 }
 
 impl Default for Settings {
@@ -86,6 +107,7 @@ impl Default for Settings {
             phone_recap: "notes".into(),
             accuracy_model: "auto".into(),
             vocabulary: String::new(),
+            screens: Vec::new(),
         }
     }
 }

@@ -51,6 +51,16 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 pub async fn update_settings(settings: Settings, app: AppHandle, state: State<'_, AppState>) -> CmdResult<Settings> {
     *state.settings.lock() = settings.clone();
     state.save_settings().map_err(err)?;
+    // Open extra screens follow look changes straight away.
+    for n in presentation::open_screens(&app) {
+        if let Some(sc) = settings.screens.get(n) {
+            if let Err(e) = presentation::open_screen(&app, n, &sc.look, &sc.key, sc.monitor) {
+                log::warn!("couldn't update screen {}: {e}", n + 2);
+            }
+        } else {
+            let _ = presentation::close_screen(&app, n);
+        }
+    }
     // A sharing failure (port in use) is reported in the Share panel, not as a failed save.
     if let Err(e) = apply_sharing(&app, &state) {
         log::warn!("{e}");
@@ -626,6 +636,25 @@ pub async fn open_output_window(monitor: Option<usize>, app: AppHandle) -> CmdRe
 #[tauri::command]
 pub async fn close_output_window(app: AppHandle) -> CmdResult<()> {
     presentation::close_output(&app).map_err(err)
+}
+
+/// Open extra screen `n` (0-based) with its saved look, on its saved display.
+#[tauri::command]
+pub async fn open_screen(n: usize, app: AppHandle, state: State<'_, AppState>) -> CmdResult<Vec<usize>> {
+    let screen = state.settings.lock().screens.get(n).cloned().ok_or("that screen isn't set up")?;
+    presentation::open_screen(&app, n, &screen.look, &screen.key, screen.monitor).map_err(err)?;
+    Ok(presentation::open_screens(&app))
+}
+
+#[tauri::command]
+pub async fn close_screen(n: usize, app: AppHandle) -> CmdResult<Vec<usize>> {
+    presentation::close_screen(&app, n).map_err(err)?;
+    Ok(presentation::open_screens(&app))
+}
+
+#[tauri::command]
+pub async fn list_open_screens(app: AppHandle) -> CmdResult<Vec<usize>> {
+    Ok(presentation::open_screens(&app))
 }
 
 // ---------- sharing (phones, OBS overlay, remote) ----------

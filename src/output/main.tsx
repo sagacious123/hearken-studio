@@ -3,8 +3,14 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createRoot } from "react-dom/client";
 import { api, events, type OutputState } from "../lib/ipc";
 import { parseTheme } from "../lib/theme";
+import { KEY_COLORS, LowerThird, StageDisplay } from "./ScreenLooks";
 import { SlideView } from "./SlideView";
 import { Stage } from "./Stage";
+
+/** Extra screens say how they look in their address: output.html?look=stage */
+const params = new URLSearchParams(location.search);
+const LOOK = params.get("look") ?? "full";
+const KEY = params.get("key") ?? "black";
 
 /**
  * Projector window. Stateless by design: Rust owns OutputState, so this window can be
@@ -40,6 +46,21 @@ function OutputApp() {
   const themeJson = JSON.stringify(state?.theme ?? null);
   const theme = useMemo(() => parseTheme(JSON.parse(themeJson)), [themeJson]);
 
+  if (LOOK === "lower-third") {
+    const key = KEY === "theme" ? theme.background.color : KEY_COLORS[KEY as keyof typeof KEY_COLORS] ?? KEY_COLORS.black;
+    return (
+      <Stage background={key}>
+        <LowerThird state={state} theme={theme} keyColor={key} />
+      </Stage>
+    );
+  }
+  if (LOOK === "stage") {
+    return (
+      <Stage background="#000">
+        <StageDisplay state={state} />
+      </Stage>
+    );
+  }
   return (
     <Stage background={theme.background.color}>
       <SlideView slide={state?.slide ?? null} theme={theme} blackout={state?.blackout ?? false} reading={state?.reading} qr={state?.qr} />
