@@ -17,7 +17,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering::Relaxed},
-        Arc,
+        Arc, OnceLock,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -84,6 +84,13 @@ const SONG_AUTO_THRESHOLD: f32 = 0.85;
 /// Finished sentences waiting for the accuracy pass; beyond this they keep the quick text,
 /// so a slow computer never builds a backlog.
 const REFINE_QUEUE: usize = 3;
+/// A sentence that waited longer than this for the accuracy pass is skipped (it keeps the
+/// quick text): on a computer where the model falls behind, the backlog can't grow.
+const REFINE_MAX_WAIT: Duration = Duration::from_secs(6);
+/// References the accuracy pass finds later than this after they were said aren't queued:
+/// the moment has passed, and a card 20 s late is noise to the operator. (The better text
+/// still goes to the transcript and archive.)
+const REFINE_MAX_LATE: Duration = Duration::from_secs(8);
 
 pub struct PipelineConfig {
     pub device: Option<String>,
@@ -172,6 +179,8 @@ struct RefineJob {
     utterance: u64,
     audio: Vec<f32>,
     captured_at: Instant,
+    /// The quick pass's text, archived instead if this sentence is skipped as too old.
+    quick_text: Arc<OnceLock<String>>,
 }
 
 struct Job {
@@ -494,9 +503,10 @@ impl AsrWorker {
         let settings = self.app.state::<AppState>().settings.lock().clone();
         // Hand a finished sentence to the accuracy pass first, so both decode in parallel.
         // If it's busy, this sentence keeps the quick text (logged below).
+        let quick_text = Arc::new(OnceLock::new());
         let refining = job.is_final
             && self.refine.as_ref().is_some_and(|tx| {
-                let refine_job = RefineJob { utterance: job.utterance, audio: job.audio.clone(), captured_at: job.captured_at };
+                let refine_job = RefineJob { utterance: job.utterance, audio: job.audio.clone(), captured_at: job.captured_at, quick_text: quick_text.clone() };
                 match tx.try_send(refine_job) {
                     Ok(()) => true,
                     Err(TrySendError::Full(_)) => {
@@ -542,6 +552,7 @@ impl AsrWorker {
         if transcript.text.is_empty() {
             return;
         }
+        let _ = quick_text.set(transcript.text.clone());
 
         // Cloned handle so `state` doesn't borrow `self` across the `&mut self` calls below.
         let app = self.app.clone();
@@ -731,6 +742,16 @@ impl RefineWorker {
             let planned: Vec<String> = state.plan.lock().refs.iter().map(|r| r.label()).collect();
             let prompt = whisper::accurate_prompt(&settings.vocabulary, &planned, &books);
 
+            // Fallen behind: let this sentence keep its quick text rather than grow a backlog.
+            let waited = job.captured_at.elapsed();
+            if waited > REFINE_MAX_WAIT {
+                log::info!("accuracy pass behind ({:.1} s); utterance {} keeps the quick text", waited.as_secs_f32(), job.utterance);
+                if let Some(text) = job.quick_text.get() {
+                    state.history.said(text);
+                }
+                continue;
+            }
+
             let t0 = Instant::now();
             let transcript = match engine.transcribe(&job.audio, self.opts, &prompt) {
                 Ok(t) => t,
@@ -757,6 +778,11 @@ impl RefineWorker {
                 continue;
             }
             state.history.said(&transcript.text);
+            let late = job.captured_at.elapsed();
+            if late > REFINE_MAX_LATE {
+                log::info!("accuracy pass took {:.1} s for utterance {}; its references are too late to queue", late.as_secs_f32(), job.utterance);
+                continue;
+            }
             let asr_factor = 0.7 + 0.3 * transcript.confidence.clamp(0.0, 1.0);
             let meaning = settings.meaning_detection.then(|| state.meaning.lock().clone()).flatten();
             let refs = find_references(&mut self.parser, &self.bible, &self.v11n, &transcript.text, true, settings.quote_detection, meaning.as_deref(), asr_factor);

@@ -43,6 +43,8 @@ export function AccuracyButton() {
   const effective = choice === "off" ? null : choice === "auto" ? autoPick : installed(choice) ? choice : null;
   const label = (id?: string | null) => models.find((m) => m.id === id)?.label ?? id ?? "";
   const downloading = Object.keys(progress).filter((id) => !installed(id));
+  // A model pinned with "Always" that its speed test says can't keep up on this computer.
+  const tooSlow = choice !== "auto" && choice !== "off" && installed(choice) && known(choice) === false;
 
   const download = async (id: string) => {
     setError(null);
@@ -64,6 +66,7 @@ export function AccuracyButton() {
         title="Transcription accuracy and vocabulary"
       >
         Accuracy{downloading.length ? " ↓" : ""}
+        {tooSlow && <span className="ml-1 text-amber-300">⚠</span>}
       </button>
       {open && (
         <div className="absolute right-0 top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[26rem] space-y-4 overflow-y-auto overscroll-contain rounded-lg bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700">
@@ -108,6 +111,17 @@ export function AccuracyButton() {
               Off <span className="text-zinc-500">(quick transcription only)</span>
             </Choice>
           </fieldset>
+          {tooSlow && (
+            <div className="space-y-2 rounded-md bg-amber-950/60 p-3 text-xs text-amber-200 ring-1 ring-amber-800">
+              <p>
+                <b>{label(choice)}</b> is too slow on this computer while listening, so references it finds would come too late. Sentences it can't
+                reach in time keep the quick text, and its late finds aren't queued.
+              </p>
+              <button onClick={() => void saveSettings({ accuracyModel: "auto" })} className="rounded bg-amber-600 px-2 py-1 font-medium text-white hover:bg-amber-500">
+                Use Automatic
+              </button>
+            </div>
+          )}
 
           <div className="space-y-2">
             <h4 className="text-xs font-semibold text-zinc-400">Models</h4>

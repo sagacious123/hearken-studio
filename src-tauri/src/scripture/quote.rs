@@ -565,3 +565,23 @@ mod tests {
         assert!(full[0].score >= 0.95, "{}", full[0].score);
     }
 }
+
+#[cfg(test)]
+mod timing {
+    /// `cargo test quote_timing -- --ignored --nocapture` (add --release to compare)
+    #[test]
+    #[ignore = "timing"]
+    fn quote_timing() {
+        let db = super::BibleDb::open(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/bible.db")).unwrap();
+        let lines = include_str!("../../tests/fixtures/sermon-love-never-fails.txt").lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>();
+        let _ = super::find_quotes(&db, lines[0]);
+        let t = std::time::Instant::now();
+        let mut worst = std::time::Duration::ZERO;
+        for l in &lines {
+            let t1 = std::time::Instant::now();
+            let _ = super::find_quotes(&db, l);
+            worst = worst.max(t1.elapsed());
+        }
+        println!("quote search: {:.1} ms per sentence, worst {:.1} ms", t.elapsed().as_secs_f64() * 1000.0 / lines.len() as f64, worst.as_secs_f64() * 1000.0);
+    }
+}
