@@ -46,6 +46,9 @@ ttf-parser = "0.25"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 flate2 = "1"
 
+# Style editor: the fonts installed on this computer
+fontdb = "0.24"
+
 # Local network sharing: phone view, OBS overlay, phone remote
 tiny_http = "0.12"
 mdns-sd = "0.21"   # announce a friendly name (hearken.local) on the church network

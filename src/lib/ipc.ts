@@ -305,6 +305,7 @@ export const api = {
   startPipeline: () => invoke<PipelineInfo>("start_pipeline"),
   stopPipeline: () => invoke<void>("stop_pipeline"),
   listTranslations: () => invoke<Translation[]>("list_translations"),
+  listSystemFonts: () => invoke<string[]>("list_system_fonts"),
   openScreen: (n: number) => invoke<number[]>("open_screen", { n }),
   closeScreen: (n: number) => invoke<number[]>("close_screen", { n }),
   listOpenScreens: () => invoke<number[]>("list_open_screens"),

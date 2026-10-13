@@ -657,6 +657,31 @@ pub async fn list_open_screens(app: AppHandle) -> CmdResult<Vec<usize>> {
     Ok(presentation::open_screens(&app))
 }
 
+/// Font families installed on this computer, for the style editor (scanned once, ~0.1–0.5 s).
+#[tauri::command]
+pub async fn list_system_fonts() -> CmdResult<Vec<String>> {
+    static FONTS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    if let Some(f) = FONTS.get() {
+        return Ok(f.clone());
+    }
+    let fonts = tauri::async_runtime::spawn_blocking(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        let mut names: Vec<String> = db
+            .faces()
+            .filter_map(|f| f.families.first().map(|(name, _)| name.trim().to_owned()))
+            // Hidden system faces (".SF NS", "#Gothic") aren't meant to be picked.
+            .filter(|n| !n.is_empty() && !n.starts_with(['.', '#']))
+            .collect();
+        names.sort_by_key(|n| n.to_lowercase());
+        names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        names
+    })
+    .await
+    .map_err(err)?;
+    Ok(FONTS.get_or_init(|| fonts).clone())
+}
+
 // ---------- sharing (phones, OBS overlay, remote) ----------
 
 #[tauri::command]

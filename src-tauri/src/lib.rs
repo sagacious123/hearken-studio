@@ -94,6 +94,7 @@ pub fn run() {
             commands::get_insights,
             commands::export_recap,
             commands::list_library,
+            commands::list_system_fonts,
             commands::open_screen,
             commands::close_screen,
             commands::list_open_screens,

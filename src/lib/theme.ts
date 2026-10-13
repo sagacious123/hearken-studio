@@ -30,6 +30,8 @@ export interface Theme {
     verseNumbers: boolean;
     /** Follow-along: colour of the words already read or sung ("" turns highlighting off). */
     readColor: string;
+    /** Outline around the letters, for text over busy pictures or video (width 0 = none). */
+    outline: { width: number; color: string };
   };
   reference: {
     show: boolean;
@@ -66,6 +68,7 @@ export const DEFAULT_THEME: Theme = {
     shadow: "0 2px 12px rgba(0,0,0,0.6)",
     verseNumbers: true,
     readColor: "#fde68a",
+    outline: { width: 0, color: "#000000" },
   },
   reference: {
     show: true,
@@ -95,6 +98,7 @@ const RANGES: Record<string, [number, number]> = {
   "text.minPx": [12, 200],
   "text.maxPx": [16, 320],
   "reference.sizePx": [12, 160],
+  "text.outline.width": [0, 12],
   "layout.paddingPct": [0, 25],
   "transition.durationMs": [0, 3000],
 };
@@ -137,6 +141,15 @@ export interface FontChoice {
   /** Shipped with the app (same look on every computer, offline). */
   bundled: boolean;
 }
+
+/** Text shadow choices: layered shadows for a stronger lift than one blur can give. */
+export const SHADOWS: { label: string; css: string }[] = [
+  { label: "None", css: "" },
+  { label: "Soft", css: DEFAULT_THEME.text.shadow },
+  { label: "Strong", css: "0 2px 4px rgba(0,0,0,0.9), 0 4px 18px rgba(0,0,0,0.75), 0 0 42px rgba(0,0,0,0.5)" },
+  { label: "Glow", css: "0 0 10px rgba(255,255,255,0.55), 0 0 28px rgba(255,255,255,0.3)" },
+  { label: "Block", css: "4px 4px 0 rgba(0,0,0,0.85), 8px 8px 0 rgba(0,0,0,0.35)" },
+];
 
 export const FONTS: FontChoice[] = [
   { label: "Georgia", stack: DEFAULT_THEME.text.fontFamily, bundled: false },

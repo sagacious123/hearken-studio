@@ -2,7 +2,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { forgetUpload, SAMPLES } from "../../lib/backgrounds";
 import { api, type UploadedBackground } from "../../lib/ipc";
-import { DEFAULT_THEME, FONTS, parseTheme, parseThemeJson, PRESETS, type Theme } from "../../lib/theme";
+import { DEFAULT_THEME, FONTS, parseTheme, parseThemeJson, PRESETS, SHADOWS, type Theme } from "../../lib/theme";
 import { useDashboard } from "../store";
 import { useDismiss } from "../useDismiss";
 
@@ -14,7 +14,6 @@ const WEIGHTS: [number, string][] = [
   [700, "Bold"],
   [800, "Extra bold"],
 ];
-const DEFAULT_SHADOW = DEFAULT_THEME.text.shadow;
 const DEFAULT_READ = DEFAULT_THEME.text.readColor;
 
 /**
@@ -275,8 +274,31 @@ function TextSection({ theme, edit }: { theme: Theme; edit: Edit }) {
           onChange={(v) => edit((t) => void (t.layout.verticalAlign = v as Theme["layout"]["verticalAlign"]))}
         />
       </Row>
+      <Row label="Shadow">
+        <select value={SHADOWS.some((sh) => sh.css === text.shadow) ? text.shadow : "custom"} onChange={(e) => edit((t) => void (t.text.shadow = e.target.value))} className="min-w-0 flex-1 rounded bg-zinc-800 px-2 py-1">
+          {!SHADOWS.some((sh) => sh.css === text.shadow) && <option value="custom">Custom</option>}
+          {SHADOWS.map((sh) => (
+            <option key={sh.label} value={sh.css}>
+              {sh.label}
+            </option>
+          ))}
+        </select>
+      </Row>
+      <Row label="Outline">
+        <Color value={text.outline.color} onChange={(v) => edit((t) => void (t.text.outline.color = v))} />
+        <input
+          type="range"
+          min={0}
+          max={12}
+          step={0.5}
+          value={text.outline.width}
+          onChange={(e) => edit((t) => void (t.text.outline.width = Number(e.target.value)))}
+          className="min-w-0 flex-1 accent-amber-500"
+          aria-label="Outline width"
+        />
+        <span className="w-10 text-right font-mono text-xs text-zinc-400">{text.outline.width ? `${text.outline.width}px` : "Off"}</span>
+      </Row>
       <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-        <Check label="Shadow" checked={!!text.shadow} onChange={(on) => edit((t) => void (t.text.shadow = on ? DEFAULT_SHADOW : ""))} />
         <Check label="Verse numbers" checked={text.verseNumbers} onChange={(on) => edit((t) => void (t.text.verseNumbers = on))} />
         <Check label="Highlight words read" checked={!!text.readColor} onChange={(on) => edit((t) => void (t.text.readColor = on ? DEFAULT_READ : ""))} />
         {text.readColor && <Color value={text.readColor} onChange={(v) => edit((t) => void (t.text.readColor = v))} />}
@@ -408,8 +430,26 @@ function Segmented({ value, options, onChange }: { value: string; options: [stri
   );
 }
 
+/** Installed fonts, fetched once per session (the scan takes a moment). */
+let systemFonts: Promise<string[]> | null = null;
+const fontStack = (family: string) => `"${family.replace(/"/g, "")}", system-ui, sans-serif`;
+
+function useSystemFonts() {
+  const [fonts, setFonts] = useState<string[]>([]);
+  useEffect(() => {
+    // Anything but a list (an older backend, a failed scan) means no extra fonts, never a crash.
+    systemFonts ??= api
+      .listSystemFonts()
+      .then((f) => (Array.isArray(f) ? f : []))
+      .catch(() => []);
+    void systemFonts.then(setFonts);
+  }, []);
+  return fonts;
+}
+
 function FontSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const known = FONTS.some((f) => f.stack === value);
+  const installed = useSystemFonts();
+  const known = FONTS.some((f) => f.stack === value) || installed.some((f) => fontStack(f) === value);
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} className="min-w-0 flex-1 rounded bg-zinc-800 px-2 py-1" style={{ fontFamily: value }}>
       {!known && <option value={value}>Custom font</option>}
@@ -420,13 +460,22 @@ function FontSelect({ value, onChange }: { value: string; onChange: (v: string) 
           </option>
         ))}
       </optgroup>
-      <optgroup label="On this computer">
+      <optgroup label="Common">
         {FONTS.filter((f) => !f.bundled).map((f) => (
           <option key={f.label} value={f.stack}>
             {f.label}
           </option>
         ))}
       </optgroup>
+      {installed.length > 0 && (
+        <optgroup label={`Installed on this computer (${installed.length})`}>
+          {installed.map((f) => (
+            <option key={f} value={fontStack(f)}>
+              {f}
+            </option>
+          ))}
+        </optgroup>
+      )}
     </select>
   );
 }

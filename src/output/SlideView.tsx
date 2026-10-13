@@ -161,6 +161,9 @@ function FitColumn({ slideId, theme, justify, children }: { slideId: string; the
         lineHeight: text.lineHeight,
         textAlign: text.align,
         textShadow: text.shadow || undefined,
+        // Painted behind the fill, so only the outer half shows: twice the width asked for.
+        WebkitTextStroke: text.outline.width > 0 ? `${text.outline.width * 2}px ${text.outline.color}` : undefined,
+        paintOrder: text.outline.width > 0 ? "stroke fill" : undefined,
       }}
     >
       {children}

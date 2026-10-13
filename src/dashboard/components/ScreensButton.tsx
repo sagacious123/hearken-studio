@@ -4,6 +4,8 @@ import { useDashboard } from "../store";
 import { useDismiss } from "../useDismiss";
 
 const MAX_SCREENS = 3;
+/** Stable empty list: a fresh `[]` from a store selector would re-render forever. */
+const NO_SCREENS: ScreenConfig[] = [];
 
 const LOOKS: { value: ScreenConfig["look"]; label: string; hint: string }[] = [
   { value: "stage", label: "Stage display", hint: "For the preacher or worship leader: large text, what's been read, screen status and the time." },
@@ -13,7 +15,7 @@ const LOOKS: { value: ScreenConfig["look"]; label: string; hint: string }[] = [
 
 /** Extra screens beside the main output: a stage display, a lower third for streaming, or a copy. */
 export function ScreensButton({ monitors }: { monitors: MonitorInfo[] }) {
-  const screens = useDashboard((s) => s.settings?.screens ?? []);
+  const screens = useDashboard((s) => s.settings?.screens ?? NO_SCREENS);
   const saveSettings = useDashboard((s) => s.saveSettings);
   const [open, setOpen] = useState(false);
   const [live, setLive] = useState<number[]>([]);
