@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "output",
-  "description": "Projector window: listen to events, read output state, and close itself on Esc. No updater/process access.",
-  "windows": ["output"],
+  "description": "Projector window and extra screens (output-2…output-4): listen to events, read output state, and close itself on Esc. No updater/process access.",
+  "windows": ["output", "output-*"],
   "permissions": ["core:default", "core:window:allow-close"]
 }
