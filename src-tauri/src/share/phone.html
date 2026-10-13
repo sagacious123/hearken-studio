@@ -20,9 +20,11 @@
   /* A select is as wide as its longest option ("YLT — Young's Literal Translation"), which pushed
      the page past the phone's width. Let it take the space that's left, and no more. */
   select { flex: 1 1 0; min-width: 0; margin-left: auto; text-overflow: ellipsis; }
-  select, button { font: inherit; font-size: 16px; color: var(--ink); background: var(--chip); border: 1px solid var(--line);
+  select, button, .btn { font: inherit; font-size: 16px; color: var(--ink); background: var(--chip); border: 1px solid var(--line);
                    border-radius: 8px; padding: 8px 10px; }
-  button { flex: none; min-width: 44px; min-height: 40px; }
+  button, .btn { flex: none; min-width: 44px; min-height: 40px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+  .btn[hidden] { display: none; }
   @media (max-width: 420px) { header .title { display: none; } }
   main { max-width: 720px; margin: 0 auto; overflow-wrap: anywhere;
          padding: 24px max(16px, env(safe-area-inset-right)) max(64px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
@@ -41,6 +43,7 @@
   <select id="tr" aria-label="Translation"></select>
   <button id="smaller" aria-label="Smaller text">A−</button>
   <button id="bigger" aria-label="Bigger text">A+</button>
+  <a id="recap" class="btn" href="/recap" hidden>Recap</a>
 </header>
 <main id="main"><p class="waiting">Waiting for the next scripture…</p></main>
 <script>
@@ -51,6 +54,9 @@
   };
   const main = document.getElementById("main");
   const tr = document.getElementById("tr");
+  const recap = document.getElementById("recap");
+  // The recap opens in the reader's chosen translation, with PDF and Word downloads.
+  const recapLink = () => { recap.href = "/recap" + (translation ? "?t=" + encodeURIComponent(translation) : ""); };
   let size = Number(store.get("sb.size", 22));
   let translation = store.get("sb.tr", "");
   let shown = "";
@@ -66,7 +72,8 @@
       list.map(t => `<option value="${t.code}">${t.code} — ${t.name}</option>`).join("");
     tr.value = translation;
   }).catch(() => {});
-  tr.onchange = () => { translation = tr.value; store.set("sb.tr", translation); shown = ""; poll(); };
+  tr.onchange = () => { translation = tr.value; store.set("sb.tr", translation); shown = ""; recapLink(); poll(); };
+  recapLink();
 
   const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -83,6 +90,7 @@
     try {
       const r = await fetch("/api/state" + (translation ? "?t=" + encodeURIComponent(translation) : ""));
       const s = await r.json();
+      recap.hidden = !s.recap;
       const key = JSON.stringify(s.slide);
       if (key !== shown) { shown = key; render(s.slide); }
       failures = 0;

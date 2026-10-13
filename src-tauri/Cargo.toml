@@ -39,6 +39,13 @@ rust-stemmers = "1.2"   # quote matcher: "loved"/"loves" → "love"
 # Service history (recaps, archive, insights, CCLI report)
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
+# Recap downloads: PDF (with an embedded, subsetted font so any Bible's letters print) and Word
+pdf-writer = "0.15"
+subsetter = "0.2"
+ttf-parser = "0.25"
+zip = { version = "4", default-features = false, features = ["deflate"] }
+flate2 = "1"
+
 # Local network sharing: phone view, OBS overlay, phone remote
 tiny_http = "0.12"
 mdns-sd = "0.21"   # announce a friendly name (hearken.local) on the church network

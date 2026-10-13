@@ -95,6 +95,8 @@ export interface PipelineInfo {
   refineModel: string | null;
 }
 
+export type RecapFormat = "pdf" | "docx" | "doc" | "html";
+
 export interface Settings {
   translation: string;
   autoProject: boolean;
@@ -113,6 +115,8 @@ export interface Settings {
   /** Friendly network name: phones open http://<name>.local. */
   shareName: string;
   churchName: string;
+  /** What phones can open from "Recap". */
+  phoneRecap: "notes" | "scriptures" | "off";
   /** "auto" | "off" | a model id. */
   accuracyModel: string;
   /** Names and words to listen for, comma or line separated. */
@@ -294,7 +298,7 @@ export const api = {
   listSessions: () => invoke<DaySummary[]>("list_sessions"),
   searchArchive: (query: string) => invoke<ArchiveHit[]>("search_archive", { query }),
   getInsights: (year: number) => invoke<Insights>("get_insights", { year }),
-  exportRecap: (date: string) => invoke<string>("export_recap", { date }),
+  exportRecap: (date: string, format: RecapFormat) => invoke<string>("export_recap", { date, format }),
   exportCcliReport: (days: number) => invoke<string>("export_ccli_report", { days }),
   listBackgrounds: () => invoke<UploadedBackground[]>("list_backgrounds"),
   /** Sends the raw bytes (fast) with the original name in a header. */

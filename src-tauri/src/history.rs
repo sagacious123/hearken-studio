@@ -13,7 +13,10 @@ use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-use crate::scripture::{books, ScriptureRef, Slide};
+use crate::{
+    recap::{notes, SermonNotes},
+    scripture::{books, ScriptureRef, Slide},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -65,7 +68,7 @@ fn now_ms() -> i64 {
     Local::now().timestamp_millis()
 }
 
-fn time_of(ms: i64) -> String {
+pub(crate) fn time_of(ms: i64) -> String {
     Local.timestamp_millis_opt(ms).single().map(|t| t.format("%H:%M").to_string()).unwrap_or_default()
 }
 
@@ -172,6 +175,12 @@ impl History {
 
     pub fn recap(&self, day: &str) -> Recap {
         recap_from(day, &self.load(day))
+    }
+
+    /// The recap with sermon notes made from that day's transcript.
+    pub fn recap_with_notes(&self, day: &str) -> (Recap, SermonNotes) {
+        let entries = self.load(day);
+        (recap_from(day, &entries), notes::notes_from(&entries))
     }
 
     /// Transcript lines and references matching `query`, newest first. A query that parses as
@@ -338,6 +347,9 @@ pub struct RecapItem {
     pub text: String,
     #[serde(skip)]
     pub book_id: Option<u8>,
+    /// For showing the recap in another translation.
+    #[serde(skip)]
+    pub reference: Option<ScriptureRef>,
 }
 
 #[derive(Debug, Serialize)]
@@ -389,6 +401,7 @@ fn recap_from(date: &str, entries: &[Entry]) -> Recap {
                         translation: translation.clone(),
                         text: text.clone(),
                         book_id: reference.as_ref().map(|r| r.book_id),
+                        reference: reference.clone(),
                     });
                 }
             }
@@ -400,57 +413,10 @@ fn recap_from(date: &str, entries: &[Entry]) -> Recap {
     let mut seen = HashSet::new();
     for (at, label) in mentioned {
         if !shown_labels.contains(&label) && seen.insert(label.clone()) {
-            r.mentioned.push(RecapItem { time: time_of(at), label, translation: String::new(), text: String::new(), book_id: None });
+            r.mentioned.push(RecapItem { time: time_of(at), label, translation: String::new(), text: String::new(), book_id: None, reference: None });
         }
     }
     r
-}
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
-}
-
-/// A self-contained, printable page (Save as PDF from the browser's print dialog).
-pub fn recap_html(r: &Recap, church: &str) -> String {
-    let date = NaiveDate::parse_from_str(&r.date, "%Y-%m-%d").map(|d| d.format("%A %-d %B %Y").to_string()).unwrap_or_else(|_| r.date.clone());
-    let mut body = String::new();
-    if r.scriptures.is_empty() {
-        body.push_str("<p class=\"empty\">No scriptures were shown in this service.</p>");
-    }
-    for s in &r.scriptures {
-        body.push_str(&format!(
-            "<article><header><h2>{}</h2><span>{} · {}</span></header><p>{}</p></article>",
-            esc(&s.label),
-            esc(&s.translation),
-            esc(&s.time),
-            esc(&s.text)
-        ));
-    }
-    if !r.mentioned.is_empty() {
-        let items: Vec<String> = r.mentioned.iter().map(|m| esc(&m.label)).collect();
-        body.push_str(&format!("<section><h3>Also mentioned</h3><p>{}</p></section>", items.join(" · ")));
-    }
-    if !r.songs.is_empty() {
-        let items: Vec<String> = r.songs.iter().map(|s| esc(&s.title)).collect();
-        body.push_str(&format!("<section><h3>Songs</h3><p>{}</p></section>", items.join(" · ")));
-    }
-    let heading = if church.trim().is_empty() { "Sermon scriptures".to_owned() } else { esc(church.trim()) };
-    format!(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{heading} — {date}</title>
-<style>
-:root{{--ink:#1c1917;--muted:#78716c;--line:#e7e5e4;--accent:#b45309;--bg:#fafaf9}}
-@media (prefers-color-scheme:dark){{:root{{--ink:#f5f5f4;--muted:#a8a29e;--line:#292524;--accent:#fbbf24;--bg:#0c0a09}}}}
-body{{margin:0;background:var(--bg);color:var(--ink);font:17px/1.6 Georgia,"Iowan Old Style",serif}}
-main{{max-width:720px;margin:0 auto;padding:48px 20px}}
-h1{{font:600 30px/1.2 system-ui,sans-serif;margin:0}} .date{{color:var(--muted);font-family:system-ui,sans-serif;margin:6px 0 36px}}
-article{{border-top:1px solid var(--line);padding:18px 0}} article header{{display:flex;justify-content:space-between;align-items:baseline;gap:12px}}
-h2{{font:600 19px system-ui,sans-serif;color:var(--accent);margin:0}} article header span{{color:var(--muted);font:13px system-ui,sans-serif;white-space:nowrap}}
-article p{{margin:8px 0 0}} section{{border-top:1px solid var(--line);padding:18px 0}} h3{{font:600 14px system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 6px}}
-footer{{margin-top:36px;color:var(--muted);font:12px system-ui,sans-serif}} .empty{{color:var(--muted)}}
-@media print{{body{{background:#fff;color:#000}} main{{padding:0}} article{{break-inside:avoid}}}}
-</style></head><body><main><h1>{heading}</h1><p class="date">{date}</p>{body}<footer>Recap made with Hearken Studio</footer></main></body></html>"#
-    )
 }
 
 #[cfg(test)]
@@ -490,7 +456,6 @@ mod tests {
         assert_eq!(r.scriptures.len(), 1);
         assert_eq!(r.mentioned.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(), ["Romans 8:28"]);
         assert_eq!(r.songs.len(), 1);
-        assert!(recap_html(&r, "Grace Chapel").contains("John 3:16"));
 
         let kinds: Vec<_> = h.search("john 3", None, 10).iter().map(|x| x.kind).collect();
         assert_eq!(kinds, ["shown", "said"]); // newest first: the slide, then what was said

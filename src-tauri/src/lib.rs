@@ -4,6 +4,7 @@ mod backgrounds;
 mod commands;
 mod follow;
 mod history;
+mod recap;
 mod pipeline;
 mod presentation;
 mod scripture;

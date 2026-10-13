@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
-import { api, type ArchiveHit, type DaySummary, type Insights } from "../../lib/ipc";
+import { api, type ArchiveHit, type DaySummary, type Insights, type RecapFormat } from "../../lib/ipc";
 import { useDashboard } from "../store";
+import { useDismiss } from "../useDismiss";
+
+const FORMATS: { format: RecapFormat; label: string }[] = [
+  { format: "pdf", label: "PDF" },
+  { format: "docx", label: "Word (.docx)" },
+  { format: "doc", label: "Word 97–2003 (.doc)" },
+  { format: "html", label: "Web page" },
+];
 
 const KIND = { said: "Said", shown: "Shown", mentioned: "Mentioned" } as const;
 
@@ -18,9 +26,9 @@ export function ArchivePanel() {
     api.listSessions().then(setSessions).catch((e) => setNotice({ text: String(e), error: true }));
   }, []);
 
-  const recap = async (date: string) => {
+  const recap = async (date: string, format: RecapFormat) => {
     try {
-      setNotice({ text: `Recap saved to ${await api.exportRecap(date)}` });
+      setNotice({ text: `Recap saved to ${await api.exportRecap(date, format)}` });
     } catch (e) {
       setNotice({ text: String(e), error: true });
     }
@@ -46,15 +54,43 @@ export function ArchivePanel() {
                     .join(" · ")}
                 </div>
               </div>
-              <button onClick={() => recap(s.date)} className="flex-none rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700" title="Save a shareable page (print it to PDF from the browser)">
-                Recap
-              </button>
+              <RecapMenu onPick={(f) => recap(s.date, f)} />
             </li>
           ))}
         </ul>
       </section>
 
       <InsightsView />
+    </div>
+  );
+}
+
+/** Save a service's recap (scriptures, sermon notes, songs) in the chosen format. */
+function RecapMenu({ onPick }: { onPick: (format: RecapFormat) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss<HTMLDivElement>(open, () => setOpen(false));
+  return (
+    <div ref={ref} className="relative flex-none">
+      <button onClick={() => setOpen(!open)} className="rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700" title="Save the scriptures, sermon notes and songs to share">
+        Recap ▾
+      </button>
+      {open && (
+        <ul className="absolute right-0 top-full z-20 mt-1 w-44 rounded-md bg-zinc-900 py-1 shadow-xl ring-1 ring-zinc-700">
+          {FORMATS.map(({ format, label }) => (
+            <li key={format}>
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  onPick(format);
+                }}
+                className="w-full px-3 py-1.5 text-left text-xs hover:bg-zinc-800"
+              >
+                {label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

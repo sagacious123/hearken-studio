@@ -53,6 +53,9 @@ pub struct Settings {
     pub share_name: String,
     /// Heading on sermon recaps.
     pub church_name: String,
+    /// What congregation phones can open from "Recap": "notes" (scriptures, songs and sermon
+    /// notes), "scriptures" (without the notes) or "off".
+    pub phone_recap: String,
     /// Accuracy pass: "auto", "off", or a model id ("small.en", "large-v3-turbo").
     pub accuracy_model: String,
     /// Names and words to listen for (pastors, the church, places), comma or line separated.
@@ -77,6 +80,7 @@ impl Default for Settings {
             share_port: 7878,
             share_name: "hearken".into(),
             church_name: String::new(),
+            phone_recap: "notes".into(),
             accuracy_model: "auto".into(),
             vocabulary: String::new(),
         }

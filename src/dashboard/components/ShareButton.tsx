@@ -117,6 +117,7 @@ export function ShareButton() {
                 </div>
               </div>
               <Link label="Phones" url={info.phoneUrl} />
+              <PhoneRecap />
               <Link label="Livestream overlay" url={info.overlayUrl} hint="OBS/vMix: add a Browser source, 1920×1080. Add ?pos=top to move it up." />
               <Link label="Remote" url={info.remoteUrl} hint={`Open on your phone and enter PIN ${info.pin}.`} />
               <div className="rounded-md bg-zinc-950 p-2 text-xs text-zinc-400 ring-1 ring-zinc-800">
@@ -129,6 +130,26 @@ export function ShareButton() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Whether congregation phones get a Recap button, and whether it includes the sermon notes. */
+function PhoneRecap() {
+  const mode = useDashboard((s) => s.settings?.phoneRecap ?? "notes");
+  const saveSettings = useDashboard((s) => s.saveSettings);
+  return (
+    <label className="block space-y-1">
+      <span className="text-xs text-zinc-400">Recap on phones (read or download as PDF or Word)</span>
+      <select
+        value={mode}
+        onChange={(e) => void saveSettings({ phoneRecap: e.target.value as typeof mode })}
+        className="w-full rounded-md bg-zinc-950 px-2 py-1.5 text-sm ring-1 ring-zinc-800 focus:ring-sky-600"
+      >
+        <option value="notes">Scriptures, songs and sermon notes</option>
+        <option value="scriptures">Scriptures and songs only</option>
+        <option value="off">Off</option>
+      </select>
+    </label>
   );
 }
 

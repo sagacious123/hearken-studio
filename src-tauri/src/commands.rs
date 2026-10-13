@@ -24,7 +24,8 @@ use crate::{
     },
     audio::capture::{self, DeviceInfo},
     events,
-    history::{self, ArchiveHit, DaySummary, Insights},
+    history::{ArchiveHit, DaySummary, Insights},
+    recap,
     pipeline::{self, PipelineConfig, PipelineInfo, RefineConfig},
     presentation::{self, MonitorInfo, OutputState},
     scripture::{self, db, db::Translation, parser::ReferenceParser, ScriptureRef, Slide},
@@ -614,17 +615,19 @@ pub async fn get_insights(year: i32, state: State<'_, AppState>) -> CmdResult<In
     Ok(state.history.insights(year))
 }
 
-/// Writes the recap page to Documents/Hearken Studio and opens it in the browser
-/// (where it can be printed or saved as PDF). Returns the file path.
+/// Saves the recap (with sermon notes) to Documents/Hearken Studio as "html", "pdf", "docx" or
+/// "doc", and opens it. Returns the file path.
 #[tauri::command]
-pub async fn export_recap(date: String, app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
-    let recap = state.history.recap(&date);
-    if recap.scriptures.is_empty() && recap.songs.is_empty() && recap.mentioned.is_empty() {
+pub async fn export_recap(date: String, format: String, app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
+    let format = recap::Format::from_ext(&format).ok_or("unknown recap format")?;
+    let (recap, notes) = state.history.recap_with_notes(&date);
+    if recap.scriptures.is_empty() && recap.songs.is_empty() && recap.mentioned.is_empty() && notes.is_empty() {
         return Err("nothing was detected or shown on that day".into());
     }
     let church = state.settings.lock().church_name.clone();
-    let path = export_dir(&app)?.join(format!("Recap {date}.html"));
-    std::fs::write(&path, history::recap_html(&recap, &church)).map_err(err)?;
+    let bytes = recap::render(&recap::document(&recap, Some(&notes), &church), format).map_err(err)?;
+    let path = export_dir(&app)?.join(recap::file_name(&date, format));
+    std::fs::write(&path, bytes).map_err(err)?;
     open_path(&path);
     Ok(path.display().to_string())
 }

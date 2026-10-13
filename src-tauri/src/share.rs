@@ -1,5 +1,7 @@
 //! Local-network sharing, no internet needed:
 //!   /         congregation phones follow the live verse, in any translation and text size
+//!   /recap    the service so far (scriptures, songs, sermon notes) to read or download as
+//!             PDF or Word
 //!   /overlay  transparent lower third for OBS / vMix browser sources (livestream)
 //!   /remote   drive the output from a phone (needs the PIN shown in the dashboard)
 //! Plain HTTP on the church network, served from a small blocking server thread, on port 80
@@ -30,6 +32,7 @@ use announce::{Announcement, NameStatus};
 use crate::{
     commands,
     presentation::QrOverlay,
+    recap::{self, Format},
     scripture::{BibleDb, Slide},
     state::AppState,
 };
@@ -279,6 +282,45 @@ fn respond(req: Request, status: u16, content_type: &str, body: String) {
     let _ = req.respond(resp);
 }
 
+fn respond_file(req: Request, content_type: &str, file_name: &str, body: Vec<u8>) {
+    // File names are ASCII ("Sermon recap 2026-10-11.pdf"); quotes are the only risk.
+    let disposition = format!("attachment; filename=\"{}\"", file_name.replace('"', ""));
+    let resp = Response::from_data(body)
+        .with_header(Header::from_bytes("Content-Type", content_type).expect("header"))
+        .with_header(Header::from_bytes("Content-Disposition", disposition.as_bytes()).expect("header"))
+        .with_header(Header::from_bytes("Cache-Control", "no-store").expect("header"));
+    let _ = req.respond(resp);
+}
+
+/// The latest service's recap for phones, as the operator allows: `None` when switched off.
+fn phone_recap(state: &AppState, bible: Option<&BibleDb>, translation: Option<&str>) -> Option<(String, recap::Document)> {
+    let (mode, church) = {
+        let s = state.settings.lock();
+        (s.phone_recap.clone(), s.church_name.clone())
+    };
+    if mode == "off" {
+        return None;
+    }
+    let date = state.history.days().into_iter().next().unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+    let (mut r, notes) = state.history.recap_with_notes(&date);
+    if let (Some(t), Some(db)) = (translation.filter(|t| !t.is_empty()), bible) {
+        recap::retranslate(&mut r, db, t);
+    }
+    let notes = (mode == "notes").then_some(&notes);
+    Some((date, recap::document(&r, notes, &church)))
+}
+
+fn recap_toolbar(translation: Option<&str>) -> String {
+    let q = translation.filter(|t| !t.is_empty()).map(|t| format!("?t={}", t.chars().filter(char::is_ascii_alphanumeric).collect::<String>())).unwrap_or_default();
+    format!(
+        r#"<nav class="bar"><a class="back" href="/">← Live</a><span class="dl">Download</span><a href="/recap.pdf{q}" download>PDF</a><a href="/recap.docx{q}" download>Word</a><a href="/recap.doc{q}" download>.doc</a></nav>"#
+    )
+}
+
+const RECAP_OFF: &str = r#"<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Recap</title>
+<style>body{font:17px/1.5 system-ui,sans-serif;margin:0;padding:30vh 24px;text-align:center;color:#78716c}a{color:inherit}</style>
+<p>The recap isn't shared on this network.</p><p><a href="/">← Back to the live verse</a></p>"#;
+
 fn handle(app: &AppHandle, bible: Option<&BibleDb>, pin: &str, req: Request) {
     let (path, q) = query(req.url());
     let state = app.state::<AppState>();
@@ -288,6 +330,22 @@ fn handle(app: &AppHandle, bible: Option<&BibleDb>, pin: &str, req: Request) {
         (Method::Get, "/") => respond(req, 200, html, PHONE_HTML.into()),
         (Method::Get, "/overlay") => respond(req, 200, html, OVERLAY_HTML.into()),
         (Method::Get, "/remote") => respond(req, 200, html, REMOTE_HTML.into()),
+        (Method::Get, "/recap") => match phone_recap(&state, bible, q.get("t").map(String::as_str)) {
+            Some((_, doc)) => respond(req, 200, html, recap::phone_page(&doc, &recap_toolbar(q.get("t").map(String::as_str)))),
+            None => respond(req, 403, html, RECAP_OFF.into()),
+        },
+        (Method::Get, p) if p.starts_with("/recap.") => {
+            let Some(format) = Format::from_ext(&p["/recap.".len()..]).filter(|f| *f != Format::Html) else {
+                return respond(req, 404, "text/plain", "Not found".into());
+            };
+            match phone_recap(&state, bible, q.get("t").map(String::as_str)) {
+                Some((date, doc)) => match recap::render(&doc, format) {
+                    Ok(bytes) => respond_file(req, format.mime(), &recap::file_name(&date, format), bytes),
+                    Err(e) => respond(req, 500, "text/plain", format!("Couldn't make the recap: {e:#}")),
+                },
+                None => respond(req, 403, html, RECAP_OFF.into()),
+            }
+        }
         (Method::Get, "/api/state") => {
             let body = live_json(&state, bible, q.get("t").map(String::as_str));
             respond(req, 200, js, body.to_string())
@@ -314,7 +372,7 @@ fn handle(app: &AppHandle, bible: Option<&BibleDb>, pin: &str, req: Request) {
 fn live_json(state: &AppState, bible: Option<&BibleDb>, translation: Option<&str>) -> serde_json::Value {
     let live = state.presenter.snapshot();
     let Some(slide) = live.slide.filter(|_| !live.blackout) else {
-        return json!({ "revision": live.revision, "slide": null });
+        return json!({ "revision": live.revision, "slide": null, "recap": recap_shared(state) });
     };
     let (code, verses) = match (translation, bible) {
         (Some(t), Some(db)) if !slide.is_song() && !t.eq_ignore_ascii_case(&slide.translation) => {
@@ -329,6 +387,7 @@ fn live_json(state: &AppState, bible: Option<&BibleDb>, translation: Option<&str
     };
     json!({
         "revision": live.revision,
+        "recap": recap_shared(state),
         "slide": {
             "id": slide.id,
             "label": slide.label,
@@ -337,6 +396,10 @@ fn live_json(state: &AppState, bible: Option<&BibleDb>, translation: Option<&str
             "verses": verses,
         }
     })
+}
+
+fn recap_shared(state: &AppState) -> bool {
+    state.settings.lock().phone_recap != "off"
 }
 
 fn item(slide: &Slide, kind: &str) -> serde_json::Value {
