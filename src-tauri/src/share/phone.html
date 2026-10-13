@@ -34,6 +34,7 @@
   .text sup { font-family: system-ui, sans-serif; font-size: .55em; color: var(--muted); margin-right: 3px; }
   .song .text { white-space: pre-line; }
   .waiting { color: var(--muted); text-align: center; margin-top: 30vh; }
+  .notice { color: var(--muted); font-size: 12px; line-height: 1.4; margin: 20px 0 0; }
   .offline { color: var(--muted); font-size: 13px; text-align: center; margin-top: 24px; }
 </style>
 </head>
@@ -83,7 +84,8 @@
       ? esc(slide.verses.map(v => v.text).join("\n"))
       : slide.verses.map(v => (slide.verses.length > 1 ? `<sup>${v.verse}</sup>` : "") + esc(v.text)).join(" ");
     main.className = slide.song ? "song" : "";
-    main.innerHTML = `<p class="label">${esc(slide.label)}${slide.song ? "" : `<small>${esc(slide.translation)}</small>`}</p><p class="text">${body}</p>`;
+    const notice = slide.notice ? `<p class="notice">${esc(slide.notice)}</p>` : "";
+    main.innerHTML = `<p class="label">${esc(slide.label)}${slide.song ? "" : `<small>${esc(slide.translation)}</small>`}</p><p class="text">${body}</p>${notice}`;
   }
 
   async function poll() {

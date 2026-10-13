@@ -135,6 +135,16 @@ pub fn document(r: &Recap, notes: Option<&SermonNotes>, church: &str) -> Documen
     Document { title, subtitle, blocks }
 }
 
+/// Credit downloaded translations whose licence asks for it (e.g. Biblica's CC BY-SA texts).
+pub fn add_credits(doc: &mut Document, r: &Recap, db: &BibleDb) {
+    let used: std::collections::BTreeSet<String> = r.scriptures.iter().map(|s| s.translation.to_uppercase()).collect();
+    for t in db.translations().into_iter().filter(|t| t.downloaded && used.contains(&t.code.to_uppercase())) {
+        if let Some(license) = t.license {
+            doc.blocks.push(Block::Note(format!("{}: {license}", t.code)));
+        }
+    }
+}
+
 /// Show the recap's scriptures in another translation (a phone reader's choice). Passages the
 /// translation lacks keep the text that was projected.
 pub fn retranslate(r: &mut Recap, db: &BibleDb, code: &str) {
@@ -148,6 +158,9 @@ pub fn retranslate(r: &mut Recap, db: &BibleDb, code: &str) {
             if !v.is_empty() {
                 s.text = v.iter().map(|v| v.text.as_str()).collect::<Vec<_>>().join(" ");
                 s.translation = code.to_uppercase();
+                if let Some(name) = db.book_name(code, rf.book_id) {
+                    s.label = rf.label_with(Some(&name));
+                }
             }
         }
     }

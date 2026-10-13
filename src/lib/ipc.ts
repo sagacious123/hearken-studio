@@ -181,6 +181,20 @@ export interface Translation {
   id: number;
   code: string;
   name: string;
+  /** Copyright or licence line. */
+  license: string | null;
+  /** From the Bible library (can be removed). */
+  downloaded: boolean;
+}
+
+/** A translation that can be downloaded into the Bible library. */
+export interface LibraryItem {
+  code: string;
+  name: string;
+  language: string;
+  notice: string;
+  mb: number;
+  installed: boolean;
 }
 
 export interface BookInfo {
@@ -272,6 +286,9 @@ export const api = {
   startPipeline: () => invoke<PipelineInfo>("start_pipeline"),
   stopPipeline: () => invoke<void>("stop_pipeline"),
   listTranslations: () => invoke<Translation[]>("list_translations"),
+  listLibrary: () => invoke<LibraryItem[]>("list_library"),
+  installTranslation: (code: string) => invoke<Translation[]>("install_translation", { code }),
+  removeTranslation: (code: string) => invoke<Translation[]>("remove_translation", { code }),
   searchScripture: (query: string, translation: string) =>
     invoke<SearchResponse>("search_scripture", { query, translation }),
   listBooks: () => invoke<BookInfo[]>("list_books"),
@@ -329,5 +346,6 @@ export const events = {
   pipelineWarning: on<string>("pipeline://warning"),
   outputState: on<OutputState>("output://state"),
   hardwareProgress: on<string>("hardware://progress"),
+  libraryProgress: on<{ code: string; fraction: number }>("library://progress"),
   modelProgress: on<{ id: string; received: number; total: number; phase: "download" | "testing" }>("models://progress"),
 };

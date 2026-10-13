@@ -1,6 +1,7 @@
 pub mod books;
 pub mod db;
 pub mod fuzzy;
+pub mod library;
 pub mod numbers;
 pub mod parser;
 pub mod quote;
@@ -33,7 +34,12 @@ impl ScriptureRef {
     }
 
     pub fn label(&self) -> String {
-        let name = books::by_id(self.book_id).map(|b| b.display).unwrap_or("?");
+        self.label_with(None)
+    }
+
+    /// The label with the book named in the translation's language ("Johanu 3:16").
+    pub fn label_with(&self, book_name: Option<&str>) -> String {
+        let name = book_name.or_else(|| books::by_id(self.book_id).map(|b| b.display)).unwrap_or("?");
         match (self.verse_start, self.verse_end) {
             (Some(s), Some(e)) => format!("{name} {}:{s}-{e}", self.chapter),
             (Some(s), None) => format!("{name} {}:{s}", self.chapter),
@@ -136,7 +142,7 @@ pub fn build_slide(db: &BibleDb, translation: &str, secondary: Option<&str>, r: 
     };
     Ok(Some(Slide {
         id,
-        label: shown.label(),
+        label: shown.label_with(db.book_name(translation, r.book_id).as_deref()),
         translation: translation.to_owned(),
         reference: shown,
         verses,

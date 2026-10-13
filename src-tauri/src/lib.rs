@@ -25,6 +25,7 @@ pub mod events {
     pub const OUTPUT_STATE: &str = "output://state";
     pub const HARDWARE_PROGRESS: &str = "hardware://progress";
     pub const MODEL_PROGRESS: &str = "models://progress";
+    pub const LIBRARY_PROGRESS: &str = "library://progress";
 }
 
 pub fn run() {
@@ -90,6 +91,9 @@ pub fn run() {
             commands::search_archive,
             commands::get_insights,
             commands::export_recap,
+            commands::list_library,
+            commands::install_translation,
+            commands::remove_translation,
             commands::export_ccli_report,
             commands::list_backgrounds,
             commands::save_background,

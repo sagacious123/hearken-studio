@@ -14,7 +14,7 @@ use crate::{
     history::History,
     pipeline::PipelineHandle,
     presentation::Presenter,
-    scripture::{parser, parser::ReferenceParser, BibleDb, ScriptureRef, Slide, Versification},
+    scripture::{self, parser, parser::ReferenceParser, BibleDb, ScriptureRef, Slide, Versification},
     share::Share,
     songs::SongLibrary,
 };
@@ -104,6 +104,10 @@ impl Paths {
     pub fn theme(&self) -> PathBuf {
         self.config_dir.join("theme.json")
     }
+    /// Translations downloaded from the Bible library.
+    pub fn library(&self) -> PathBuf {
+        self.config_dir.join("library.db")
+    }
     pub fn history(&self) -> PathBuf {
         self.config_dir.join("history")
     }
@@ -192,13 +196,18 @@ impl AppState {
             config_dir,
         };
 
+        // Before any Bible database opens, so every reader attaches the library.
+        if let Err(e) = scripture::library::ensure(&paths.library()) {
+            log::warn!("Bible library unavailable: {e:#}");
+        }
+        scripture::db::set_library_path(paths.library());
         let bible = BibleDb::open(&paths.bible_db)?;
         let versification = Arc::new(bible.versification()?);
         parser::warm_up();
 
         let mut settings: Settings = read_json(&paths.settings()).unwrap_or_default();
         if !bible.translations().iter().any(|t| t.code.eq_ignore_ascii_case(&settings.translation)) {
-            settings.translation = bible.translations()[0].code.clone();
+            settings.translation = bible.translations()[0].code.clone(); // a removed download
         }
         let hardware = hardware::load_cached(&paths.hardware(), env!("CARGO_PKG_VERSION"));
         if settings.secondary_translation.as_ref().is_some_and(|s| !bible.translations().iter().any(|t| t.code.eq_ignore_ascii_case(s))) {

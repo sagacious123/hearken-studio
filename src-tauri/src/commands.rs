@@ -28,7 +28,7 @@ use crate::{
     recap,
     pipeline::{self, PipelineConfig, PipelineInfo, RefineConfig},
     presentation::{self, MonitorInfo, OutputState},
-    scripture::{self, db, db::Translation, parser::ReferenceParser, ScriptureRef, Slide},
+    scripture::{self, db, db::Translation, library, parser::ReferenceParser, ScriptureRef, Slide},
     share::ShareInfo,
     songs::{self, SongSummary},
     state::{write_json, AppState, Plan, Settings},
@@ -350,7 +350,64 @@ pub async fn delete_model(id: String, state: State<'_, AppState>) -> CmdResult<V
 
 #[tauri::command]
 pub async fn list_translations(state: State<'_, AppState>) -> CmdResult<Vec<Translation>> {
-    Ok(state.bible.lock().translations().to_vec())
+    Ok(state.bible.lock().translations())
+}
+
+// ---------- Bible library: more translations, downloaded on request ----------
+
+#[tauri::command]
+pub async fn list_library(state: State<'_, AppState>) -> CmdResult<Vec<library::LibraryItem>> {
+    Ok(library::list(&state.paths.library()))
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryProgress {
+    code: String,
+    fraction: f32,
+}
+
+/// Download a translation from eBible.org into the library. Progress arrives as
+/// `library://progress` events; resolves with the new translation list.
+#[tauri::command]
+pub async fn install_translation(code: String, app: AppHandle, state: State<'_, AppState>) -> CmdResult<Vec<Translation>> {
+    let entry = library::entry(&code).ok_or("that translation isn't in the library")?;
+    let path = state.paths.library();
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        library::install(&path, entry, |fraction| {
+            let _ = app2.emit(events::LIBRARY_PROGRESS, LibraryProgress { code: entry.code.into(), fraction });
+        })
+    })
+    .await
+    .map_err(err)?
+    .map_err(|e| format!("{e:#}"))?;
+    Ok(state.bible.lock().translations())
+}
+
+/// Remove a downloaded translation. Settings that used it go back to the first translation.
+#[tauri::command]
+pub async fn remove_translation(code: String, state: State<'_, AppState>) -> CmdResult<Vec<Translation>> {
+    let path = state.paths.library();
+    let code2 = code.clone();
+    tauri::async_runtime::spawn_blocking(move || library::remove(&path, &code2)).await.map_err(err)?.map_err(|e| format!("{e:#}"))?;
+    let translations = state.bible.lock().translations();
+    let changed = {
+        let mut s = state.settings.lock();
+        let uses = |t: &str| t.eq_ignore_ascii_case(&code);
+        let changed = uses(&s.translation) || s.secondary_translation.as_deref().is_some_and(uses);
+        if uses(&s.translation) {
+            s.translation = translations[0].code.clone();
+        }
+        if s.secondary_translation.as_deref().is_some_and(uses) {
+            s.secondary_translation = None;
+        }
+        changed
+    };
+    if changed {
+        state.save_settings().map_err(err)?;
+    }
+    Ok(translations)
 }
 
 #[derive(Serialize)]
@@ -625,7 +682,9 @@ pub async fn export_recap(date: String, format: String, app: AppHandle, state: S
         return Err("nothing was detected or shown on that day".into());
     }
     let church = state.settings.lock().church_name.clone();
-    let bytes = recap::render(&recap::document(&recap, Some(&notes), &church), format).map_err(err)?;
+    let mut doc = recap::document(&recap, Some(&notes), &church);
+    recap::add_credits(&mut doc, &recap, &state.bible.lock());
+    let bytes = recap::render(&doc, format).map_err(err)?;
     let path = export_dir(&app)?.join(recap::file_name(&date, format));
     std::fs::write(&path, bytes).map_err(err)?;
     open_path(&path);

@@ -307,7 +307,11 @@ fn phone_recap(state: &AppState, bible: Option<&BibleDb>, translation: Option<&s
         recap::retranslate(&mut r, db, t);
     }
     let notes = (mode == "notes").then_some(&notes);
-    Some((date, recap::document(&r, notes, &church)))
+    let mut doc = recap::document(&r, notes, &church);
+    if let Some(db) = bible {
+        recap::add_credits(&mut doc, &r, db);
+    }
+    Some((date, doc))
 }
 
 fn recap_toolbar(translation: Option<&str>) -> String {
@@ -374,23 +378,30 @@ fn live_json(state: &AppState, bible: Option<&BibleDb>, translation: Option<&str
     let Some(slide) = live.slide.filter(|_| !live.blackout) else {
         return json!({ "revision": live.revision, "slide": null, "recap": recap_shared(state) });
     };
-    let (code, verses) = match (translation, bible) {
+    let (code, verses, label) = match (translation, bible) {
         (Some(t), Some(db)) if !slide.is_song() && !t.eq_ignore_ascii_case(&slide.translation) => {
             let r = &slide.reference;
             let s = r.verse_start.unwrap_or(1);
             match db.passage(t, r.book_id, r.chapter, s, r.verse_end.unwrap_or(s)) {
-                Ok(v) if !v.is_empty() => (t.to_uppercase(), v),
-                _ => (slide.translation.clone(), slide.verses.clone()),
+                Ok(v) if !v.is_empty() => (t.to_uppercase(), v, r.label_with(db.book_name(t, r.book_id).as_deref())),
+                _ => (slide.translation.clone(), slide.verses.clone(), slide.label.clone()),
             }
         }
-        _ => (slide.translation.clone(), slide.verses.clone()),
+        _ => (slide.translation.clone(), slide.verses.clone(), slide.label.clone()),
     };
+    // Copyright line for translations that ask to be credited (downloaded ones).
+    let notice = bible
+        .filter(|_| !slide.is_song())
+        .and_then(|db| db.translations().into_iter().find(|t| t.code.eq_ignore_ascii_case(&code)))
+        .filter(|t| t.downloaded)
+        .and_then(|t| t.license);
     json!({
         "revision": live.revision,
         "recap": recap_shared(state),
         "slide": {
             "id": slide.id,
-            "label": slide.label,
+            "label": label,
+            "notice": notice,
             "translation": code,
             "song": slide.is_song(),
             "verses": verses,

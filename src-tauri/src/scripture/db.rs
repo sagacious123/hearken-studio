@@ -2,9 +2,15 @@
 //! (translation_id, book_id, chapter, verse) unique index (~10–50 µs); FTS5 queries with
 //! BM25 ranking typically run in 1–4 ms over 5 translations (~155k verses).
 //!
-//! Schema is created by `scripts/build_bible_db.py`.
+//! Schema is created by `scripts/build_bible_db.py`. Translations downloaded from the Bible
+//! library live in a second, writable database (see `library`), attached here as `lib`; their
+//! ids start at `library::FIRST_ID`, which is how a lookup knows where to go.
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OpenFlags};
@@ -18,6 +24,10 @@ pub struct Translation {
     pub id: i64,
     pub code: String,
     pub name: String,
+    /// Copyright or licence line; shown with the text when it isn't public domain.
+    pub license: Option<String>,
+    /// Downloaded from the Bible library (can be removed).
+    pub downloaded: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -31,28 +41,45 @@ pub struct VerseHit {
 
 pub struct BibleDb {
     conn: Connection,
-    translations: Vec<Translation>,
-    by_code: HashMap<String, i64>,
+    /// The Bible library database is attached (it exists once the app has started).
+    has_library: bool,
+}
+
+/// Where downloaded translations are kept; set once at startup, before any database opens.
+static LIBRARY_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_library_path(path: PathBuf) {
+    let _ = LIBRARY_PATH.set(path);
 }
 
 impl BibleDb {
     pub fn open(path: &Path) -> Result<Self> {
-        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI)
             .with_context(|| format!("opening bible database at {}", path.display()))?;
+        // A download may be writing to the library; wait for it rather than fail a lookup.
+        conn.busy_timeout(std::time::Duration::from_secs(3))?;
+        let has_library = match LIBRARY_PATH.get().filter(|p| p.exists()) {
+            Some(lib) => {
+                let uri = format!("file:{}?mode=ro", lib.display().to_string().replace('?', "%3f").replace('#', "%23"));
+                match conn.execute("ATTACH DATABASE ?1 AS lib", [uri]) {
+                    Ok(_) => true,
+                    Err(e) => {
+                        log::warn!("couldn't open the Bible library ({}): {e}", lib.display());
+                        false
+                    }
+                }
+            }
+            None => false,
+        };
         conn.execute_batch(
             "PRAGMA query_only = ON;
              PRAGMA mmap_size = 268435456;
              PRAGMA cache_size = -16000;
              PRAGMA temp_store = MEMORY;",
         )?;
-        let translations = {
-            let mut stmt = conn.prepare("SELECT id, code, name FROM translations ORDER BY id")?;
-            let rows = stmt.query_map([], |r| Ok(Translation { id: r.get(0)?, code: r.get(1)?, name: r.get(2)? }))?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        anyhow::ensure!(!translations.is_empty(), "bible database has no translations");
-        let by_code = translations.iter().map(|t| (t.code.to_uppercase(), t.id)).collect();
-        Ok(Self { conn, translations, by_code })
+        let db = Self { conn, has_library };
+        anyhow::ensure!(!db.translations().is_empty(), "bible database has no translations");
+        Ok(db)
     }
 
     /// Empty KJV-only database with the real schema, for unit tests.
@@ -66,53 +93,98 @@ impl BibleDb {
              CREATE VIRTUAL TABLE verses_fts USING fts5(text, content = 'verses', content_rowid = 'id');",
         )
         .unwrap();
-        let translations = vec![Translation { id: 1, code: "KJV".into(), name: "King James Version".into() }];
-        let by_code = [("KJV".to_string(), 1)].into_iter().collect();
-        Self { conn, translations, by_code }
+        Self { conn, has_library: false }
     }
 
-    pub fn translations(&self) -> &[Translation] {
-        &self.translations
+    /// Bundled translations first, then downloaded ones. Read fresh each time (a few µs), so
+    /// a translation downloaded a moment ago is already here.
+    pub fn translations(&self) -> Vec<Translation> {
+        let sql = if self.has_library {
+            "SELECT id, code, name, license, 0 FROM main.translations
+             UNION ALL SELECT id, code, name, license, 1 FROM lib.translations
+             ORDER BY 5, 1"
+        } else {
+            "SELECT id, code, name, license, 0 FROM main.translations ORDER BY id"
+        };
+        let result = self.conn.prepare_cached(sql).and_then(|mut stmt| {
+            stmt.query_map([], |r| Ok(Translation { id: r.get(0)?, code: r.get(1)?, name: r.get(2)?, license: r.get(3)?, downloaded: r.get(4)? }))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        });
+        result.unwrap_or_else(|e| {
+            log::warn!("reading translations failed: {e}");
+            Vec::new()
+        })
     }
 
     fn translation_id(&self, code: &str) -> Result<i64> {
-        self.by_code.get(&code.to_uppercase()).copied().with_context(|| format!("unknown translation '{code}'"))
+        let sql = if self.has_library {
+            "SELECT id FROM main.translations WHERE code = ?1 COLLATE NOCASE
+             UNION ALL SELECT id FROM lib.translations WHERE code = ?1 COLLATE NOCASE"
+        } else {
+            "SELECT id FROM main.translations WHERE code = ?1 COLLATE NOCASE"
+        };
+        let mut stmt = self.conn.prepare_cached(sql)?;
+        let id: Option<i64> = stmt.query_row([code], |r| r.get(0)).ok();
+        id.with_context(|| format!("unknown translation '{code}'"))
+    }
+
+    /// Which database holds a translation's verses.
+    fn schema(id: i64) -> &'static str {
+        if id >= super::library::FIRST_ID {
+            "lib"
+        } else {
+            "main"
+        }
+    }
+
+    /// The book's name in a downloaded translation's own language ("Johanu" for John in
+    /// Yoruba); `None` for bundled (English) translations.
+    pub fn book_name(&self, translation: &str, book_id: u8) -> Option<String> {
+        let tid = self.translation_id(translation).ok()?;
+        if Self::schema(tid) != "lib" {
+            return None;
+        }
+        let mut stmt = self.conn.prepare_cached("SELECT name FROM lib.book_names WHERE translation_id = ?1 AND book_id = ?2").ok()?;
+        stmt.query_row(params![tid, book_id], |r| r.get(0)).ok()
     }
 
     /// Chapter verse counts from the first (reference) translation.
     pub fn versification(&self) -> Result<Versification> {
         let mut stmt = self.conn.prepare(
-            "SELECT book_id, chapter, MAX(verse) FROM verses WHERE translation_id = ?1 GROUP BY book_id, chapter",
+            "SELECT book_id, chapter, MAX(verse) FROM main.verses WHERE translation_id = ?1 GROUP BY book_id, chapter",
         )?;
+        let first = self.translations().first().map(|t| t.id).context("no translations")?;
         let map = stmt
-            .query_map([self.translations[0].id], |r| Ok(((r.get::<_, u8>(0)?, r.get::<_, u16>(1)?), r.get::<_, u16>(2)?)))?
+            .query_map([first], |r| Ok(((r.get::<_, u8>(0)?, r.get::<_, u16>(1)?), r.get::<_, u16>(2)?)))?
             .collect::<rusqlite::Result<HashMap<_, _>>>()?;
         Ok(Versification::from_map(map))
     }
 
     pub fn passage(&self, translation: &str, book_id: u8, chapter: u16, start: u16, end: u16) -> Result<Vec<VerseLine>> {
         let tid = self.translation_id(translation)?;
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT verse, text FROM verses
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT verse, text FROM {}.verses
              WHERE translation_id = ?1 AND book_id = ?2 AND chapter = ?3 AND verse BETWEEN ?4 AND ?5
              ORDER BY verse",
-        )?;
+            Self::schema(tid)
+        ))?;
         let rows = stmt.query_map(params![tid, book_id, chapter, start, end], |r| {
             Ok(VerseLine { verse: r.get(0)?, text: r.get(1)? })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// FTS5 search. `fts_query` must already be a safe FTS5 expression (see `user_query`).
-    /// `translation = None` searches every translation — used by quote matching so that
-    /// modern paraphrase can hit WEB while archaic phrasing hits KJV.
+    /// FTS5 search over the bundled translations. `fts_query` must already be a safe FTS5
+    /// expression (see `user_query`). `translation = None` searches every bundled translation —
+    /// used by quote matching so that modern paraphrase can hit WEB while archaic phrasing hits
+    /// KJV. A downloaded translation searches the bundled ones (its words aren't indexed).
     pub fn search(&self, translation: Option<&str>, fts_query: &str, limit: usize) -> Result<Vec<VerseHit>> {
-        let tid = translation.map(|t| self.translation_id(t)).transpose()?;
+        let tid = translation.map(|t| self.translation_id(t)).transpose()?.filter(|&id| Self::schema(id) == "main");
         let mut stmt = self.conn.prepare_cached(
             "SELECT t.code, v.book_id, v.chapter, v.verse, v.text, bm25(verses_fts) AS rank
-             FROM verses_fts
-             JOIN verses v ON v.id = verses_fts.rowid
-             JOIN translations t ON t.id = v.translation_id
+             FROM main.verses_fts
+             JOIN main.verses v ON v.id = verses_fts.rowid
+             JOIN main.translations t ON t.id = v.translation_id
              WHERE verses_fts MATCH ?1 AND (?2 IS NULL OR v.translation_id = ?2)
              ORDER BY rank
              LIMIT ?3",
