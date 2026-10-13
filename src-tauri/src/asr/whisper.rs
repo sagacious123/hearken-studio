@@ -10,7 +10,8 @@ pub const GPU_BACKEND: &str = if cfg!(target_os = "macos") { "metal" } else { "v
 /// Biases the decoder toward Bible vocabulary and toward writing references as
 /// "Book C:V" digits, which is far easier (and faster) to parse than spelled-out numbers.
 const DOMAIN_PROMPT: &str = "Sermon transcript with scripture references such as John 3:16, Romans 8:28, \
-1 Corinthians 13:4-7, Philippians 4:13, Psalm 23:1, Habakkuk 2:3, Ecclesiastes 3:1, Deuteronomy 31:6.";
+1 Corinthians 13:4-7, Philippians 4:13, Psalm 23:1, Habakkuk 2:3, Ecclesiastes 3:1, Deuteronomy 31:6, \
+Exodus 14:14, Isaiah 40:31, Ezekiel 37:4, Galatians 5:22, Leviticus 19:18, Revelation 21:4.";
 
 /// Whisper keeps only the last ~224 prompt tokens; this keeps us comfortably inside that.
 const MAX_PROMPT_CHARS: usize = 820;

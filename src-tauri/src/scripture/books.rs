@@ -94,6 +94,65 @@ pub static BOOKS: [Book; 66] = [
     book!(66, "Revelation", "Revelation", 22, None, false, ["revelation", "revelations", "rev"]),
 ];
 
+/// How book names commonly come out of speech recognition, or are said in other accents
+/// ("Exodos", "Deutronomy", "Isaya", "first Pita"). Recognised like the real name, chapter-only
+/// references included, at slightly lower confidence (`parser::MISHEARD_PENALTY`). Numbered
+/// books list base names; ordinals are added as usual. Everyday words and place names
+/// ("Philippines", "Romance", "Easter") are left to the sound-alike matcher, which needs more
+/// evidence. (book ids, spellings, weak) — weak spellings are also ordinary words.
+pub static MISHEARD: &[(&[u8], &[&str], bool)] = &[
+    (&[1], &["genises", "genisis", "genesys", "jenesis", "geneses"], false),
+    (&[2], &["exodos", "exodous", "exedus", "exudus", "exodas", "exodes"], false),
+    (&[3], &["leviticos", "levitikus", "levitcus", "leviticous", "levitikos"], false),
+    (&[5], &["deutronomy", "deuteronomi", "deutoronomy", "deuteronomey", "dutronomy", "deuteronomies", "deutoronomi"], false),
+    (&[6], &["joshuah", "jeshua", "joshwa"], false),
+    (&[9, 10], &["samual", "semuel", "samwel", "samuels"], false),
+    (&[11, 12], &["king"], true),
+    (&[13, 14], &["chronicle", "cronicles", "chronicals", "cronicals", "kronicles"], false),
+    (&[16], &["nehemia", "nehemaya", "nehemiya", "nehamiah"], false),
+    (&[17], &["ester"], true),
+    (&[19], &["salm", "salms", "psalmes", "psams"], false),
+    (&[20], &["proverbes", "provabs", "provebs"], false),
+    (&[21], &["ecclesiates", "eclesiastes", "ecclesiastis", "eclesiates", "ecclesiastes's"], false),
+    (&[23], &["isaya", "isiah", "isaia", "isayah", "esaias", "isaiahs"], false),
+    (&[24], &["jeremaya", "jeremia", "jerimiah", "jeremaiah", "jeremiahs"], false),
+    (&[25], &["lamentation", "lamentaions"], false),
+    (&[26], &["ezekial", "ezikiel", "ezechiel", "izikiel", "ezekiah", "ezekel"], false),
+    (&[28], &["hoshea", "hozea"], false),
+    (&[31], &["obadaya", "obadia", "obediah"], false),
+    (&[33], &["maika", "micha", "mikah"], false),
+    (&[34], &["nahom"], false),
+    (&[35], &["habbakuk", "habakook", "habakkok", "habakok", "abakuk", "habacuc"], false),
+    (&[36], &["zephania", "sefania", "zefaniah"], false),
+    (&[37], &["hagai", "haggi", "hagay"], false),
+    (&[38], &["zachariah", "zecharia", "zakaria", "zacharia", "zacharias", "zakariah"], false),
+    (&[39], &["malachai", "malaki", "malakai", "malakia", "malachy"], false),
+    (&[40], &["mathew", "matthews", "mattew", "mathews", "matiu"], false),
+    (&[43, 62, 63, 64], &["jon", "johns"], true),
+    (&[45], &["roman"], true),
+    (&[46, 47], &["corinthias", "carinthians", "chorinthians", "corintians", "corinthans", "corinthiens", "korinthians", "corithians"], false),
+    (&[48], &["galatian", "galations", "galeshians", "galatias", "galasians", "galatiens"], false),
+    (&[49], &["ephesian", "efesians", "ephesions", "ephisians", "ephesus", "ephesiens"], false),
+    (&[50], &["philippian", "phillippians", "philipian", "filipians", "philippiens", "phillipian"], false),
+    (&[51], &["colossian", "collosians", "colosians", "colossions", "kolossians", "colosians"], false),
+    (&[52, 53], &["thessalonian", "thesalonians", "tesalonians", "thessalonica", "thessalonions", "thesalonica"], false),
+    (&[54, 55], &["timoty", "timothee", "timotheus", "timoti"], false),
+    (&[57], &["philemone", "filemon", "filemone"], false),
+    (&[58], &["hebrew"], true),
+    (&[60, 61], &["pita", "peta", "petre", "peters"], false),
+    (&[66], &["revalation", "revilation", "revelasion", "revalations", "revelation's"], false),
+];
+
+/// Is `alias` (as matched, ordinal included) one of the `MISHEARD` spellings?
+pub fn is_misheard(alias: &str) -> bool {
+    let base = alias.rsplit(' ').next().unwrap_or(alias);
+    MISHEARD.iter().any(|(_, spellings, _)| spellings.contains(&base))
+}
+
+fn misheard_for(id: u8) -> impl Iterator<Item = (&'static str, bool)> {
+    MISHEARD.iter().filter(move |(ids, _, _)| ids.contains(&id)).flat_map(|(_, spellings, weak)| spellings.iter().map(move |s| (*s, *weak)))
+}
+
 pub fn by_id(id: u8) -> Option<&'static Book> {
     BOOKS.get((id as usize).checked_sub(1)?)
 }
@@ -101,12 +160,13 @@ pub fn by_id(id: u8) -> Option<&'static Book> {
 /// The book whose name `word` sounds like ("philippines" → Philippians, "romance" → Romans),
 /// among books with the given ordinal ("first corinthean"). None if no book is close or two
 /// different books are equally close.
-pub fn fuzzy_match(word: &str, ordinal: Option<u8>) -> Option<&'static Book> {
+pub fn fuzzy_match(word: &str, ordinal: Option<u8>) -> Option<(&'static Book, usize)> {
     let word_sound = super::fuzzy::sound(word);
     let mut best: Option<(usize, &'static Book)> = None;
     let mut tied = false;
     for b in BOOKS.iter().filter(|b| b.ordinal == ordinal) {
-        for &alias in b.aliases.iter().filter(|a| a.len() >= 4 && !a.contains(' ')) {
+        let spellings = b.aliases.iter().copied().chain(misheard_for(b.id).filter(|(_, weak)| !weak).map(|(s, _)| s));
+        for alias in spellings.filter(|a| a.len() >= 4 && !a.contains(' ')) {
             if !super::fuzzy::alike(word, &word_sound, alias, &super::fuzzy::sound(alias)) {
                 continue;
             }
@@ -121,7 +181,7 @@ pub fn fuzzy_match(word: &str, ordinal: Option<u8>) -> Option<&'static Book> {
             }
         }
     }
-    best.filter(|_| !tied).map(|(_, b)| b)
+    best.filter(|_| !tied).map(|(d, b)| (b, d))
 }
 
 /// "1", "first", "1st", "ii", … → 1, 2 or 3.
@@ -142,8 +202,9 @@ fn ordinal_prefixes(n: u8) -> &'static [&'static str] {
 pub fn all_aliases() -> Vec<(String, u8, bool)> {
     let mut out = Vec::new();
     for b in &BOOKS {
-        for &a in b.aliases {
-            let weak = b.ambiguous || a.len() <= 3;
+        let spellings = b.aliases.iter().map(|&a| (a, false)).chain(misheard_for(b.id));
+        for (a, misheard_weak) in spellings {
+            let weak = b.ambiguous || misheard_weak || a.len() <= 3;
             match b.ordinal {
                 None => out.push((a.to_string(), b.id, weak)),
                 Some(n) => {

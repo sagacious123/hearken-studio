@@ -72,6 +72,8 @@ const SEP: &str = r"(?P<sep>\s*:\s*|\s*-\s*|\s+(?:and\s+)?(?:verses?|vs|v)\s+|\s
 const NOT_BOOKS: &[&str] = &["chapter", "chapters", "verse", "verses", "number"];
 /// Confidence cost of a book name recognised only by sound; keeps such hits out of auto-projection.
 const FUZZY_BOOK_PENALTY: f32 = 0.2;
+/// Confidence cost of a known mishearing ("Exodos"): nearly as sure as the real name.
+pub const MISHEARD_PENALTY: f32 = 0.05;
 
 static PATTERNS: LazyLock<Patterns> = LazyLock::new(|| {
     let mut aliases: HashMap<String, (u8, bool)> = HashMap::new();
@@ -116,7 +118,8 @@ struct Context {
 
 enum Hit<'t> {
     Full(Captures<'t>),
-    Fuzzy(Captures<'t>, &'static books::Book),
+    /// A word that sounds like a book name, with its distance from the nearest spelling.
+    Fuzzy(Captures<'t>, &'static books::Book, usize),
     Verse(Captures<'t>),
     Chapter(Captures<'t>),
 }
@@ -152,12 +155,12 @@ impl ReferenceParser {
                 continue;
             }
             let ordinal = c.name("ord").and_then(|o| books::ordinal_value(o.as_str()));
-            if let Some(book) = books::fuzzy_match(word, ordinal) {
-                fuzzy.push((m.range(), c, book));
+            if let Some((book, edits)) = books::fuzzy_match(word, ordinal) {
+                fuzzy.push((m.range(), c, book, edits));
             }
         }
-        for (range, c, book) in fuzzy {
-            hits.push((range.start, Hit::Fuzzy(c, book)));
+        for (range, c, book, edits) in fuzzy {
+            hits.push((range.start, Hit::Fuzzy(c, book, edits)));
             spans.push(range);
         }
         let overlaps = |s: usize| spans.iter().any(|r| r.contains(&s));
@@ -179,7 +182,7 @@ impl ReferenceParser {
         let mut out = Vec::new();
         for (_, hit) in hits {
             let (caps, kind) = match &hit {
-                Hit::Full(c) | Hit::Fuzzy(c, _) => (c, RefKind::Explicit),
+                Hit::Full(c) | Hit::Fuzzy(c, _, _) => (c, RefKind::Explicit),
                 Hit::Chapter(c) | Hit::Verse(c) => (c, RefKind::Contextual),
             };
             let m = caps.get(0).unwrap();
@@ -199,6 +202,9 @@ impl ReferenceParser {
                     // "John 3 16" is as explicit as "John 3:16": the speaker doesn't pronounce the
                     // colon, Whisper just may or may not write one.
                     let mut conf: f32 = if r.verse_start.is_some() { 0.95 } else { 0.7 };
+                    if books::is_misheard(&alias) {
+                        conf -= MISHEARD_PENALTY;
+                    }
                     if split {
                         conf -= 0.1;
                     }
@@ -208,13 +214,16 @@ impl ReferenceParser {
                     }
                     Some((r, conf))
                 }
-                Hit::Fuzzy(c, book) => {
+                Hit::Fuzzy(c, book, edits) => {
                     let raw_ch: u32 = c["ch"].parse().unwrap_or(0);
                     let Some((r, split)) = resolve(book, raw_ch, vs, ve, and_range, v11n) else { continue };
-                    if r.verse_start.is_none() {
-                        continue; // "romance 8" alone is too weak to call a reference
+                    // A chapter alone needs more: "chapter" said ("Exodos chapter 20"), or a word
+                    // one letter off a book name ("Exodis 20"). "romance 8" stays everyday speech.
+                    let near = *edits <= 1 && c["word"].len() >= 5 && !book.ambiguous;
+                    if r.verse_start.is_none() && c.name("chkw").is_none() && !near {
+                        continue;
                     }
-                    let mut conf = 0.95 - FUZZY_BOOK_PENALTY;
+                    let mut conf = if r.verse_start.is_some() { 0.95 } else { 0.7 } - FUZZY_BOOK_PENALTY;
                     if split {
                         conf -= 0.1;
                     }
@@ -306,7 +315,16 @@ mod tests {
     fn v11n() -> Versification {
         let mut m = HashMap::new();
         for (book, ch, max) in [
-            (43u8, 3u16, 36u16), // John 3
+            (2u8, 20u16, 26u16), // Exodus 20
+            (2, 3, 22),
+            (5, 6, 25),   // Deuteronomy 6
+            (60, 5, 14),  // 1 Peter 5
+            (66, 21, 27), // Revelation 21
+            (35, 2, 20),  // Habakkuk 2
+            (26, 37, 28), // Ezekiel 37
+            (48, 5, 26),  // Galatians 5
+            (40, 5, 48),  // Matthew 5
+            (43, 3, 36), // John 3
             (43, 1, 51),
             (45, 8, 39),  // Romans 8
             (19, 23, 6),  // Psalm 23
@@ -391,6 +409,42 @@ mod tests {
         }
         // A real book name is never second-guessed.
         assert_eq!(parse_one("John 3:16").confidence, 0.95);
+    }
+
+    #[test]
+    fn common_mishearings_and_accents() {
+        for (heard, want) in [
+            ("Exodos 20", sr(2, 20, None, None)),
+            ("Exodos chapter 20 verse 3", sr(2, 20, Some(3), None)),
+            ("turn to Exodos 3:14", sr(2, 3, Some(14), None)),
+            ("Deutronomy 6 verse 5", sr(5, 6, Some(5), None)),
+            ("Isaya 53 5", sr(23, 53, Some(5), None)),
+            ("first Pita 5:7", sr(60, 5, Some(7), None)),
+            ("Ezekial 37", sr(26, 37, None, None)),
+            ("Habakok 2 verse 2", sr(35, 2, Some(2), None)),
+            ("Habbakuk 2:2", sr(35, 2, Some(2), None)),
+            ("Galations 5 22", sr(48, 5, Some(22), None)),
+            ("Revalation 21 4", sr(66, 21, Some(4), None)),
+            ("Mathew 5", sr(40, 5, None, None)),
+        ] {
+            let r = parse_one(heard);
+            assert_eq!(r.reference, want, "{heard}");
+            let full = if want.verse_start.is_some() { 0.95 } else { 0.7 };
+            assert!((r.confidence - (full - MISHEARD_PENALTY)).abs() < 1e-6, "{heard}: {}", r.confidence);
+        }
+        // Not in the list but one letter off, or with "chapter" said: understood, cautiously.
+        for (heard, want) in [("Exodis 20", sr(2, 20, None, None)), ("Exoduss chapter 3", sr(2, 3, None, None))] {
+            let r = parse_one(heard);
+            assert_eq!(r.reference, want, "{heard}");
+            assert!(r.confidence < 0.6, "{heard}: {}", r.confidence);
+        }
+        let v = v11n();
+        for talk in ["a roman 3 soldiers", "the king 3 times", "Romance 8", "jon 2 days ago", "hebrew 2 words"] {
+            let refs = ReferenceParser::new().parse(talk, true, &v);
+            assert!(refs.iter().all(|r| r.confidence < 0.7), "{talk}: {refs:?}");
+        }
+        // Mishearings show up when typing in the passage picker too.
+        assert!(books::all_aliases().iter().any(|(a, id, _)| a == "exodos" && *id == 2));
     }
 
     #[test]
