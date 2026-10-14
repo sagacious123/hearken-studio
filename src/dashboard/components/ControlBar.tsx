@@ -259,7 +259,7 @@ function SettingsMenu({
         <span className="hidden min-[1250px]:inline">Settings</span>
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-2 w-[22rem] space-y-4 rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
+        <div className="absolute right-0 top-full z-30 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] space-y-4 overflow-hidden rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
           <div className="grid gap-0.5">
             <MenuItem onClick={() => { setOpen(false); onStyle(); }} hint="Fonts, colours, backgrounds">Style</MenuItem>
             <MenuItem onClick={() => { setOpen(false); onPanel("accuracy"); }} hint="Models, names to listen for, search by meaning">Transcription accuracy</MenuItem>
@@ -311,9 +311,9 @@ function SettingsMenu({
 
 function MenuItem({ onClick, hint, children }: { onClick: () => void; hint: string; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} className="flex items-baseline justify-between gap-3 rounded-lg px-2 py-2 text-left hover:bg-white/[.06]">
+    <button onClick={onClick} className="-mx-2 grid min-w-0 gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-white/[.06]">
       <span className="font-medium text-zinc-100">{children}</span>
-      <span className="truncate text-xs font-light text-zinc-500">{hint}</span>
+      <span className="text-xs font-light text-zinc-500">{hint}</span>
     </button>
   );
 }
