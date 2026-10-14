@@ -65,7 +65,7 @@ export function ControlBar() {
 
       <ListenButton running={s.running} starting={s.starting} benchProgress={s.benchProgress} onToggle={() => (s.running ? s.stop() : s.start())} />
 
-      <div className={`${box} gap-2.5 pl-3 pr-2.5`} title={s.running ? "Stop listening to change the input" : "Sound input"}>
+      <div className={`${box} relative gap-2.5 pl-3 pr-2.5 ${s.running ? "" : "cursor-pointer"}`} title={s.running ? "Stop listening to change the input" : "Sound input"}>
         <Dropdown
           disabled={s.running}
           onMouseEnter={refreshDevices}
@@ -75,6 +75,8 @@ export function ControlBar() {
           label="Sound input"
           display={devices.find((d) => d.id === settings.inputDevice)?.name ?? (settings.inputDevice ? "Saved input" : "System default input")}
           className="max-w-44 font-semibold min-[1400px]:max-w-56"
+          caret={false}
+          fill
         >
           <option value="">System default input</option>
           {devices.map((d) => (
@@ -85,7 +87,9 @@ export function ControlBar() {
           ))}
         </Dropdown>
         <LevelMeter />
-        <span className="pointer-events-none text-[10px] text-zinc-500">▼</span>
+        <span aria-hidden className={`text-[10px] text-zinc-500 ${s.running ? "opacity-40" : ""}`}>
+          ▼
+        </span>
       </div>
 
       <div className={`${box} gap-1.5 pl-3 pr-2.5`}>
@@ -114,7 +118,6 @@ export function ControlBar() {
               </option>
             ))}
         </Dropdown>
-        <span className="pointer-events-none text-[10px] text-zinc-500">▼</span>
       </div>
 
       <div className="ml-auto flex flex-none items-center gap-0.5">
@@ -151,6 +154,8 @@ function Dropdown({
   value,
   display,
   onChange,
+  caret = true,
+  fill = false,
   label,
   title,
   className = "",
@@ -162,6 +167,10 @@ function Dropdown({
   value: string;
   display: string;
   onChange: (v: string) => void;
+  /** Show ▼ (inside the clickable area). */
+  caret?: boolean;
+  /** The native menu covers the nearest positioned box, so all of it opens the menu. */
+  fill?: boolean;
   label: string;
   title?: string;
   className?: string;
@@ -171,10 +180,15 @@ function Dropdown({
   children: React.ReactNode;
 }) {
   return (
-    <span className="relative inline-flex h-8 min-w-0 items-center" title={title}>
+    <span className={`${fill ? "" : "relative"} inline-flex h-8 min-w-0 items-center gap-1.5`} title={title}>
       <span aria-hidden className={`truncate text-sm text-zinc-100 ${className}`}>
         {display}
       </span>
+      {caret && (
+        <span aria-hidden className="text-[10px] text-zinc-500">
+          ▼
+        </span>
+      )}
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -182,7 +196,7 @@ function Dropdown({
         disabled={disabled}
         onMouseEnter={onMouseEnter}
         onFocus={onFocus}
-        className="absolute inset-0 w-full cursor-pointer appearance-none opacity-0 disabled:cursor-default"
+        className="absolute inset-0 z-10 h-full w-full cursor-pointer appearance-none opacity-0 disabled:cursor-default"
       >
         {children}
       </select>
