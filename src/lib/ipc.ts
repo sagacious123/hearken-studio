@@ -62,7 +62,7 @@ export interface TranscriptEvent {
   refined: boolean;
 }
 
-export type DetectionKind = "explicit" | "contextual" | "quote" | "song" | "meaning";
+export type DetectionKind = "explicit" | "contextual" | "quote" | "song" | "meaning" | "command";
 
 export interface Detection {
   id: string;

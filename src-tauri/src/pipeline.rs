@@ -209,7 +209,7 @@ struct TranscriptEvent {
 #[serde(rename_all = "camelCase")]
 struct VoiceCommandEvent {
     utterance_id: u64,
-    label: &'static str,
+    label: String,
     /// False when there was nowhere to go (already at the first or last verse).
     moved: bool,
     /// What's on screen now.
@@ -338,6 +338,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
                 infer_ewma,
                 base_step,
                 reduced_ctx,
+                last_sentence: None,
             };
             worker.run(&mut engine, job_rx);
             log::info!("asr thread stopped");
@@ -490,9 +491,48 @@ struct AsrWorker {
     infer_ewma: Arc<AtomicU32>,
     base_step: u32,
     reduced_ctx: bool,
+    /// The last finished sentence, for a command split by a pause ("Go to verse." / "6.").
+    last_sentence: Option<(Instant, String)>,
 }
 
 impl AsrWorker {
+    /// Move the live scripture as told, and show it in the detections like anything else.
+    fn run_voice_command(&self, state: &AppState, cmd: voice::Command, said: &str, utterance: u64, captured_at: Instant) {
+        let app = &self.app;
+        let before = state.presenter.snapshot().slide.map(|s| s.id);
+        let result = match cmd {
+            voice::Command::Next => commands::step_live(app, state, 1),
+            voice::Command::Previous => commands::step_live(app, state, -1),
+            voice::Command::First => commands::live_chapter_verse(app, state, 1, None).map(|_| ()),
+            voice::Command::Final => commands::live_chapter_verse(app, state, 0, None).map(|_| ()),
+            voice::Command::Verse(s, e) => commands::live_chapter_verse(app, state, s, e).map(|_| ()),
+        };
+        if let Err(e) = result {
+            log::warn!("voice command {cmd:?} failed: {e}");
+        }
+        let now = state.presenter.snapshot().slide;
+        let moved = now.as_ref().is_some_and(|s| Some(&s.id) != before.as_ref());
+        let _ = app.emit(events::VOICE_COMMAND, VoiceCommandEvent { utterance_id: utterance, label: cmd.label(), moved, now: now.as_ref().map(|s| s.label.clone()) });
+        if let Some(slide) = now.filter(|_| moved) {
+            state.history.detected(&slide, RefKind::Command.name(), 1.0, said);
+            let _ = app.emit(
+                events::DETECTION,
+                DetectionEvent {
+                    id: format!("{utterance}:voice:{}", slide.id),
+                    utterance_id: utterance,
+                    kind: RefKind::Command,
+                    confidence: 1.0,
+                    tentative: false,
+                    matched: said.trim().to_owned(),
+                    slide,
+                    auto_projected: true,
+                    planned: false,
+                    latency_ms: captured_at.elapsed().as_secs_f32() * 1000.0,
+                },
+            );
+        }
+    }
+
     fn run(&mut self, engine: &mut WhisperEngine, jobs: Receiver<Job>) {
         while let Ok(first) = jobs.recv() {
             // Coalesce the backlog: every final is kept (in order), but only the newest partial
@@ -575,27 +615,22 @@ impl AsrWorker {
             state.history.said(&transcript.text);
         }
 
-        // Spoken commands ("next verse", "go back"): finished sentences only, so a command acts
-        // once, and only while a scripture is on screen.
-        if job.is_final && settings.voice_commands {
-            if let Some(cmd) = voice::parse(&transcript.text) {
-                let live = state.presenter.snapshot();
-                if live.slide.as_ref().is_some_and(|s| !s.is_song()) {
-                    let before = live.slide.as_ref().map(|s| s.id.clone());
-                    let result = match cmd {
-                        voice::Command::Next => commands::step_live(&app, &state, 1).map(|_| ()),
-                        voice::Command::Previous => commands::step_live(&app, &state, -1).map(|_| ()),
-                        voice::Command::First => commands::live_chapter_edge(&app, &state, true).map(|_| ()),
-                        voice::Command::Final => commands::live_chapter_edge(&app, &state, false).map(|_| ()),
-                    };
-                    if let Err(e) = result {
-                        log::warn!("voice command {cmd:?} failed: {e}");
-                    }
-                    let after = state.presenter.snapshot().slide.map(|s| s.label);
-                    let moved = after.is_some() && state.presenter.snapshot().slide.map(|s| s.id) != before;
-                    let _ = self.app.emit(events::VOICE_COMMAND, VoiceCommandEvent { utterance_id: job.utterance, label: cmd.label(), moved, now: after });
+        // Spoken commands ("next verse", "go back", "go to verse 6"): finished sentences only, so
+        // a command acts once, and only while a scripture is on screen.
+        if job.is_final {
+            let previous = self.last_sentence.take().filter(|(at, _)| at.elapsed() < Duration::from_secs(8)).map(|(_, t)| t);
+            let command = settings
+                .voice_commands
+                .then(|| voice::parse(&transcript.text).or_else(|| previous.as_deref().and_then(|p| voice::parse_joined(p, &transcript.text))))
+                .flatten();
+            let live = state.presenter.snapshot();
+            match command {
+                Some(cmd) if live.slide.as_ref().is_some_and(|s| !s.is_song()) => {
+                    self.run_voice_command(&state, cmd, &transcript.text, job.utterance, job.captured_at);
                     return; // the sentence was an instruction, not something to detect or follow
                 }
+                // Kept so "Go to verse." / "6." can be read together.
+                _ => self.last_sentence = Some((Instant::now(), transcript.text.clone())),
             }
         }
 

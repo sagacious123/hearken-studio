@@ -2,7 +2,7 @@ import type { Detection } from "../../lib/ipc";
 import { useDashboard } from "../store";
 import { PanelHeader } from "./TranscriptPanel";
 
-const KIND_LABEL = { explicit: "Announced", contextual: "Follow-up", quote: "Quoted", song: "Song", meaning: "Same meaning" } as const;
+const KIND_LABEL = { explicit: "Announced", contextual: "Follow-up", quote: "Quoted", song: "Song", meaning: "Same meaning", command: "Voice command" } as const;
 
 /** The queue: everything Hearken heard, newest first. Click to preview, double-click or Live to show. */
 export function DetectionQueue() {
@@ -76,7 +76,7 @@ function DetectionRow({ d }: { d: Detection }) {
         <span className="font-medium text-zinc-300">{d.kind === "quote" && d.confidence < 0.9 ? "Possible quote" : KIND_LABEL[d.kind]}</span>
         <span className="min-w-0 truncate">· “{d.matched}”</span>
         {d.planned && <span>· in plan</span>}
-        {d.autoProjected && <span className="font-medium text-amber-300">· shown automatically</span>}
+        {d.autoProjected && <span className="font-medium text-amber-300">· {d.kind === "command" ? "shown" : "shown automatically"}</span>}
         {isLive && <span className="font-semibold tracking-wider text-red-400">· ON SCREEN</span>}
       </p>
       <p className="mt-1 line-clamp-2 text-sm font-light leading-snug text-zinc-300">{d.slide.verses[0]?.text}</p>

@@ -37,6 +37,8 @@ pub enum RefKind {
     Song,
     /// A verse said in other words, found by meaning
     Meaning,
+    /// A spoken command ("next verse", "go to verse 6") that moved the live scripture
+    Command,
 }
 
 impl RefKind {
@@ -47,6 +49,7 @@ impl RefKind {
             RefKind::Quote => "quote",
             RefKind::Song => "song",
             RefKind::Meaning => "meaning",
+            RefKind::Command => "command",
         }
     }
 }
