@@ -51,10 +51,10 @@ export function PlanPanel() {
             setDirty(true);
           }}
           onBlur={save}
-          rows={6}
+          rows={3}
           spellCheck={false}
           placeholder={"Intro: John 3:16\n1. Rom 8:28-30\n2. Psalm 23\nClose: Philippians 4:13"}
-          className="w-full resize-y rounded-md bg-zinc-900 p-2 text-sm outline-none ring-1 ring-zinc-800 focus:ring-amber-500"
+          className="w-full resize-y rounded-lg bg-white/[.02] p-2 text-sm font-light outline-none ring-1 ring-zinc-800 focus:ring-amber-500"
         />
         <div className="flex items-center gap-2">
           <button

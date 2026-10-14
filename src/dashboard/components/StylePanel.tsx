@@ -17,8 +17,8 @@ const WEIGHTS: [number, string][] = [
 const DEFAULT_READ = DEFAULT_THEME.text.readColor;
 
 /**
- * Visual theme editor in a drawer that slides in from the left, over the transcript and
- * detections, so the Preview stays in view while styling. Edits go to a draft shown in
+ * Visual theme editor in a drawer that slides in from the left, over the detections (and as
+ * wide as their column), so Preview and Live stay in view while styling. Edits go to a draft shown in
  * Preview; nothing reaches the projector until "Apply to screen".
  */
 export function StyleDrawer() {
@@ -42,7 +42,7 @@ export function StyleDrawer() {
       ref={drawerRef}
       aria-label="Style"
       inert={!open}
-      className={`absolute inset-y-0 left-0 z-30 flex w-[26rem] max-w-[calc(100%-26rem)] flex-col bg-zinc-950 shadow-2xl ring-1 ring-zinc-800 transition-transform duration-200 ease-out motion-reduce:transition-none ${
+      className={`absolute inset-y-0 left-0 z-30 flex w-[clamp(300px,calc(24vw+12px),392px)] flex-col bg-zinc-950 shadow-2xl ring-1 ring-zinc-800 transition-transform duration-200 ease-out motion-reduce:transition-none ${
         open ? "translate-x-0" : "-translate-x-full"
       }`}
     >

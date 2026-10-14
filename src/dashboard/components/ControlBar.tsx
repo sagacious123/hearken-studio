@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { api, type DeviceInfo, type MonitorInfo } from "../../lib/ipc";
 import { useDashboard } from "../store";
+import { useDismiss } from "../useDismiss";
 import { AccuracyButton } from "./AccuracyButton";
 import { BibleLibrary } from "./BibleLibrary";
 import { ScreensButton } from "./ScreensButton";
@@ -44,30 +45,36 @@ export function ControlBar() {
   }, []);
 
   const settings = s.settings;
-  if (!settings) return <header className="h-14 border-b border-zinc-800" />;
+  if (!settings) return <header className="mx-3 mt-3 h-[60px] rounded-2xl border border-zinc-800" />;
+
+  const select = "h-9 rounded-lg border border-zinc-800 bg-transparent px-2.5 text-sm font-light text-zinc-100 outline-none hover:border-zinc-600 focus:border-amber-500";
 
   return (
-    <header className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-zinc-800 bg-zinc-900 px-4 py-2 text-sm">
-      <button
-        disabled={s.starting}
-        onClick={() => (s.running ? s.stop() : s.start())}
-        className={`rounded-md px-4 py-1.5 font-semibold ${
-          s.running ? "bg-red-600 hover:bg-red-500" : "bg-emerald-600 hover:bg-emerald-500"
-        } disabled:opacity-50`}
-      >
-        {s.starting ? (s.benchProgress ?? "Starting…") : s.running ? "Stop listening" : "Start listening"}
-      </button>
+    // A floating glass bar, as on the website. Only what's used during the service is here;
+    // the rest is under Settings.
+    <header className="relative z-20 mx-3 mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-[rgba(20,16,30,.42)] py-2.5 pl-4 pr-2.5 text-sm shadow-[0_10px_40px_-12px_rgba(0,0,0,.7),inset_0_1px_0_rgba(255,255,255,.06)] backdrop-blur-xl backdrop-saturate-150">
+      <div className="mr-2 flex items-center gap-2.5 font-display text-base font-semibold tracking-[0.14em]">
+        <svg viewBox="0 0 32 32" className="h-5 w-5" aria-hidden>
+          <path d="M16 3c3 4.5 5 7.2 5 10.2A5 5 0 0 1 16 18a5 5 0 0 1-5-4.8C11 10.2 13 7.5 16 3z" fill="#e9b24c" />
+          <path d="M6 22c3.3-1.6 6.7-1.6 10 0 3.3-1.6 6.7-1.6 10 0v6c-3.3-1.6-6.7-1.6-10 0-3.3-1.6-6.7-1.6-10 0z" fill="#f4ede1" />
+        </svg>
+        <span className="hidden min-[1300px]:inline">HEARKEN</span>
+      </div>
 
-      <Field label="Input">
+      <ListenButton running={s.running} starting={s.starting} benchProgress={s.benchProgress} onToggle={() => (s.running ? s.stop() : s.start())} />
+
+      <div className="flex h-9 items-center gap-2 rounded-lg border border-zinc-800 pl-1 pr-3">
         <select
           disabled={s.running}
           onMouseEnter={refreshDevices}
           onFocus={refreshDevices}
           value={settings.inputDevice ?? ""}
           onChange={(e) => s.saveSettings({ inputDevice: e.target.value || null })}
-          className="max-w-56 rounded bg-zinc-800 px-2 py-1"
+          className="h-8 max-w-36 bg-transparent px-1.5 text-sm font-medium text-zinc-100 outline-none disabled:opacity-70 min-[1300px]:max-w-52"
+          title={s.running ? "Stop listening to change the input" : "Sound input"}
+          aria-label="Sound input"
         >
-          <option value="">System default</option>
+          <option value="">System default input</option>
           {devices.map((d) => (
             <option key={d.id} value={d.id}>
               {d.kind === "loopback" ? "🔁 " : ""}
@@ -75,17 +82,15 @@ export function ControlBar() {
             </option>
           ))}
         </select>
-      </Field>
+        <LevelMeter />
+      </div>
 
-      <LevelMeter />
-
-      <EngineBadge />
-
-      <Field label="Translation">
+      <div className="flex h-9 items-center rounded-lg border border-zinc-800 px-1">
         <select
           value={settings.translation}
           onChange={(e) => s.saveSettings({ translation: e.target.value })}
-          className="rounded bg-zinc-800 px-2 py-1"
+          className="h-8 bg-transparent px-1.5 text-sm font-medium text-zinc-100 outline-none"
+          aria-label="Translation"
         >
           {s.translations.map((t) => (
             <option key={t.code} value={t.code} title={t.name}>
@@ -93,16 +98,15 @@ export function ControlBar() {
             </option>
           ))}
         </select>
-      </Field>
-
-      <Field label="Side by side">
+        <span className="text-zinc-600">+</span>
         <select
           value={settings.secondaryTranslation ?? ""}
           onChange={(e) => s.saveSettings({ secondaryTranslation: e.target.value || null })}
-          className="rounded bg-zinc-800 px-2 py-1"
+          className="h-8 bg-transparent px-1.5 text-sm font-light text-zinc-300 outline-none"
           title="Show a second translation (or language) next to the first"
+          aria-label="Side by side"
         >
-          <option value="">Off</option>
+          <option value="">Side by side: none</option>
           {s.translations
             .filter((t) => t.code !== settings.translation)
             .map((t) => (
@@ -111,75 +115,138 @@ export function ControlBar() {
               </option>
             ))}
         </select>
-      </Field>
+      </div>
 
-      <BibleLibrary />
-
-      <Toggle
-        checked={settings.followReading}
-        onChange={(v) => s.saveSettings({ followReading: v })}
-        label="Follow reading"
-        title="Highlight the live passage as it's read and move to the next verse automatically"
-      />
-      <Toggle
-        checked={settings.lyricsDetection}
-        onChange={(v) => s.saveSettings({ lyricsDetection: v })}
-        label="Lyrics"
-        title="Recognise songs from your library as they're sung and follow them section by section"
-      />
-
-      <label className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          checked={settings.autoProject}
-          onChange={(e) => s.saveSettings({ autoProject: e.target.checked })}
-          className="accent-amber-500"
-        />
-        Auto-project ≥
-        <input
-          type="number"
-          min={0.5}
-          max={1}
-          step={0.01}
-          value={settings.autoThreshold}
-          onChange={(e) => s.saveSettings({ autoThreshold: Number(e.target.value) })}
-          className="w-16 rounded bg-zinc-800 px-1 py-0.5"
-        />
-      </label>
-
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex flex-wrap items-center gap-0.5">
+        <BibleLibrary />
         <button
           data-style-toggle
           onClick={() => s.setStyleOpen(!s.styleOpen)}
-          className={`rounded px-3 py-1 font-medium ${s.styleOpen ? "bg-amber-600 hover:bg-amber-500" : "bg-zinc-700 hover:bg-zinc-600"}`}
+          className={`h-9 rounded-lg px-2 text-sm font-light hover:bg-white/[.06] min-[1300px]:px-3 ${s.styleOpen ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
           title="Fonts, colours and backgrounds"
         >
           Style
         </button>
         <AccuracyButton />
         <ShareButton />
-        <select
-          value={monitor ?? ""}
-          onChange={(e) => setMonitor(e.target.value === "" ? null : Number(e.target.value))}
-          className="rounded bg-zinc-800 px-2 py-1"
-        >
-          <option value="">Auto (secondary display)</option>
-          {monitors.map((m) => (
-            <option key={m.index} value={m.index}>
-              {m.name} {m.width}×{m.height}
-              {m.primary ? " (primary)" : ""}
-            </option>
-          ))}
-        </select>
-        <button onClick={() => api.openOutputWindow(monitor)} className="rounded bg-amber-600 px-3 py-1 font-medium hover:bg-amber-500">
-          Open output
-        </button>
-        <button onClick={() => api.closeOutputWindow()} className="rounded bg-zinc-700 px-3 py-1 hover:bg-zinc-600">
-          Close
-        </button>
         <ScreensButton monitors={monitors} />
+        <SettingsMenu monitors={monitors} monitor={monitor} setMonitor={setMonitor} select={select} />
+        <div className="ml-1.5 flex">
+          <button
+            onClick={() => api.openOutputWindow(monitor)}
+            className="h-9 rounded-l-lg bg-amber-500 px-3.5 text-sm font-bold hover:bg-amber-400"
+            title="Open the projector output on the chosen display (Settings → Output display)"
+          >
+            Open<span className="hidden min-[1300px]:inline"> output</span>
+          </button>
+          <button
+            onClick={() => api.closeOutputWindow()}
+            className="h-9 rounded-r-lg border-l border-amber-700 bg-amber-500 px-2.5 text-sm font-bold hover:bg-amber-400"
+            title="Close the output"
+            aria-label="Close the output"
+          >
+            ✕
+          </button>
+        </div>
       </div>
     </header>
+  );
+}
+
+/** Start/stop, with how long it has been listening. */
+function ListenButton({ running, starting, benchProgress, onToggle }: { running: boolean; starting: boolean; benchProgress: string | null; onToggle: () => void }) {
+  const [since, setSince] = useState<number | null>(null);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!running) {
+      setSince(null);
+      return;
+    }
+    setSince(Date.now());
+    const id = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+  const secs = since ? Math.floor((Date.now() - since) / 1000) : 0;
+  const elapsed = `${Math.floor(secs / 3600)}:${String(Math.floor(secs / 60) % 60).padStart(2, "0")}:${String(secs % 60).padStart(2, "0")}`;
+
+  return (
+    <button
+      disabled={starting}
+      onClick={onToggle}
+      title={running ? "Stop listening" : "Start listening"}
+      className={`flex h-9 items-center gap-2.5 rounded-lg px-3.5 text-sm font-semibold disabled:opacity-60 ${
+        running ? "border border-amber-500/45 bg-amber-500/[.14] text-amber-200 hover:bg-amber-500/25" : "bg-amber-500 hover:bg-amber-400"
+      }`}
+    >
+      {running && <span className="h-2 w-2 rounded-full bg-amber-500 shadow-[0_0_0_3px_rgba(233,178,76,.25)]" />}
+      {starting ? (benchProgress ?? "Starting…") : running ? "Listening" : "Start listening"}
+      {running && <span className="font-normal tabular-nums opacity-80">{elapsed}</span>}
+    </button>
+  );
+}
+
+/** Settings usually chosen before the service starts. */
+function SettingsMenu({ monitors, monitor, setMonitor, select }: { monitors: MonitorInfo[]; monitor: number | null; setMonitor: (m: number | null) => void; select: string }) {
+  const settings = useDashboard((st) => st.settings);
+  const saveSettings = useDashboard((st) => st.saveSettings);
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss<HTMLDivElement>(open, () => setOpen(false));
+  if (!settings) return null;
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className={`flex h-9 items-center gap-1.5 rounded-lg px-2 text-sm font-light min-[1300px]:px-3 hover:bg-white/[.06] ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
+        aria-expanded={open}
+        aria-label="Settings"
+        title="Settings"
+      >
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9l2.1 2.1m10 10 2.1 2.1M4.9 19.1 7 17m10-10 2.1-2.1" />
+        </svg>
+        <span className="hidden min-[1300px]:inline">Settings</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-2 w-[22rem] space-y-4 rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
+          <div className="space-y-2.5">
+            <h3 className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">During the service</h3>
+            <Toggle checked={settings.followReading} onChange={(v) => saveSettings({ followReading: v })} label="Follow reading" title="Highlight the live passage as it's read and move to the next verse automatically" />
+            <Toggle checked={settings.lyricsDetection} onChange={(v) => saveSettings({ lyricsDetection: v })} label="Follow worship songs" title="Recognise songs from your library as they're sung and follow them section by section" />
+            <label className="flex items-center gap-2 text-zinc-300">
+              <input type="checkbox" checked={settings.autoProject} onChange={(e) => saveSettings({ autoProject: e.target.checked })} className="accent-amber-500" />
+              Show sure detections automatically, at
+              <input
+                type="number"
+                min={0.5}
+                max={1}
+                step={0.01}
+                value={settings.autoThreshold}
+                onChange={(e) => saveSettings({ autoThreshold: Number(e.target.value) })}
+                className="w-16 rounded-md border border-zinc-700 bg-transparent px-1.5 py-0.5 tabular-nums"
+                aria-label="Automatic threshold"
+              />
+            </label>
+          </div>
+          <label className="block space-y-1.5">
+            <span className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">Output display</span>
+            <select value={monitor ?? ""} onChange={(e) => setMonitor(e.target.value === "" ? null : Number(e.target.value))} className={`${select} w-full`}>
+              <option value="">Automatic (second display)</option>
+              {monitors.map((m) => (
+                <option key={m.index} value={m.index}>
+                  {m.name} {m.width}×{m.height}
+                  {m.primary ? " (primary)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="space-y-1.5 border-t border-zinc-800 pt-3">
+            <span className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">Speech engine</span>
+            <EngineBadge />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -192,25 +259,16 @@ function Toggle({ checked, onChange, label, title }: { checked: boolean; onChang
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex items-center gap-2 text-zinc-400">
-      {label}
-      <span className="text-zinc-100">{children}</span>
-    </label>
-  );
-}
-
 function LevelMeter() {
   const db = useDashboard((s) => s.status?.levelDb ?? -90);
   const speaking = useDashboard((s) => s.status?.speaking ?? false);
   const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
   return (
     <div className="flex items-center gap-2" title={`${db.toFixed(0)} dBFS`}>
-      <span className={`h-2.5 w-2.5 rounded-full ${speaking ? "bg-emerald-400" : "bg-zinc-600"}`} />
-      <div className="h-2 w-28 overflow-hidden rounded bg-zinc-800">
+      <span className={`h-1.5 w-1.5 rounded-full ${speaking ? "bg-amber-400" : "bg-zinc-600"}`} />
+      <div className="h-1 w-14 overflow-hidden rounded bg-zinc-800">
         <div
-          className={`h-full ${db > -6 ? "bg-red-500" : db > -18 ? "bg-amber-400" : "bg-emerald-500"}`}
+          className={`h-full ${db > -6 ? "bg-red-500" : "bg-amber-500"}`}
           style={{ width: `${pct}%`, transition: "width 90ms linear" }}
         />
       </div>
@@ -237,7 +295,7 @@ function EngineBadge() {
       profile.benchmarks.map((b) => `${b.model}/${b.backend}: ${b.ok ? `${b.inferMs.toFixed(0)} ms` : b.error}`).join("\n")
     : "Not benchmarked yet — runs automatically on first start";
   return (
-    <div className="flex items-center gap-2 text-xs text-zinc-400" title={title}>
+    <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400" title={title}>
       <span className="rounded bg-zinc-800 px-2 py-1 font-mono text-zinc-200">
         {model} · {backend}
         {profile && <span className="ml-1 uppercase text-amber-400">{profile.tier}</span>}

@@ -2,20 +2,20 @@ import { useState } from "react";
 import { ArchivePanel } from "./ArchivePanel";
 import { PlanPanel } from "./PlanPanel";
 import { SongsPanel } from "./SongsPanel";
-import { TranscriptPanel } from "./TranscriptPanel";
 
-const TABS = ["Transcript", "Plan", "Songs", "Archive"] as const;
+const TABS = ["Plan", "Songs", "Archive"] as const;
 type Tab = (typeof TABS)[number];
 
 function savedTab(): Tab {
   try {
     const t = localStorage.getItem("sb.tab");
-    return TABS.includes(t as Tab) ? (t as Tab) : "Transcript";
+    return TABS.includes(t as Tab) ? (t as Tab) : "Plan";
   } catch {
-    return "Transcript";
+    return "Plan";
   }
 }
 
+/** The service around the sermon: the plan, songs and past services. */
 export function Sidebar() {
   const [tab, setTab] = useState<Tab>(savedTab);
   const choose = (t: Tab) => {
@@ -28,20 +28,19 @@ export function Sidebar() {
   };
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-zinc-950">
-      <nav className="flex h-10 flex-none border-b border-zinc-800 px-2 text-xs font-semibold uppercase tracking-wider">
+    <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800 bg-white/[.02]">
+      <nav className="flex h-11 flex-none gap-5 border-b border-zinc-800 px-4 text-sm">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => choose(t)}
-            className={`border-b-2 px-3 ${t === tab ? "border-amber-500 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300"}`}
+            className={`border-b-2 ${t === tab ? "border-amber-500 font-medium text-zinc-100" : "border-transparent font-light text-zinc-500 hover:text-zinc-300"}`}
           >
             {t}
           </button>
         ))}
       </nav>
       <div className="flex min-h-0 flex-1 flex-col">
-        {tab === "Transcript" && <TranscriptPanel />}
         {tab === "Plan" && <PlanPanel />}
         {tab === "Songs" && <SongsPanel />}
         {tab === "Archive" && <ArchivePanel />}

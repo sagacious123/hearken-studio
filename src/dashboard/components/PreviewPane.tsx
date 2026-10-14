@@ -6,76 +6,122 @@ import { Stage } from "../../output/Stage";
 import { useDashboard } from "../store";
 import { PassagePicker } from "./PassagePicker";
 import { DraftBar } from "./StylePanel";
-import { PanelHeader } from "./TranscriptPanel";
 
-export function PreviewPane() {
+/**
+ * Preview and Live side by side, like a video switcher, with Go live between them. Preview
+ * shows unapplied style edits; Live always mirrors what's on the projector.
+ */
+export function Monitors() {
   const preview = useDashboard((s) => s.preview);
   const live = useDashboard((s) => s.live);
   const goLive = useDashboard((s) => s.goLive);
   const draftTheme = useDashboard((s) => s.draftTheme);
   const theme = useMemo(() => parseTheme(live?.theme), [live?.theme]);
-  // Preview shows unapplied style edits; the Live mirror always shows what's on screen.
   const previewTheme = draftTheme ?? theme;
+  const onAir = !!live?.slide && !live.blackout;
+  const status = live?.blackout ? "BLACKED OUT" : live?.slide ? "ON SCREEN" : "CLEAR";
 
   return (
-    // min-w-0 + overflow-x-hidden: this column scrolls vertically only, even where WebKit's
-    // always-visible scrollbar would leave a few pixels of sideways overflow.
-    <section data-preview-column className="flex min-h-0 min-w-0 flex-col overflow-y-auto overflow-x-hidden bg-zinc-950 [scrollbar-gutter:stable]">
-      <SearchBox />
-      <PassagePicker />
+    // Capped so the monitors leave room for the transcript and plan on very wide screens.
+    <div data-preview-column className="mx-auto grid w-full min-w-0 max-w-[calc(149vh+130px)] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
+      <div className="min-w-0 space-y-2">
+        <MonitorLabel title="Preview">
+          <span className="truncate text-xs font-light text-zinc-500">{preview ? `${preview.label} · ${preview.translation}` : "Nothing selected"}</span>
+        </MonitorLabel>
+        <DraftBar />
+        <StageBox ring={`ring-1 ${draftTheme ? "ring-amber-500" : "ring-zinc-800"}`}>
+          <Stage background={previewTheme.background.color}>
+            <SlideView slide={preview ?? (draftTheme ? SAMPLE_SLIDE : null)} theme={previewTheme} blackout={false} />
+          </Stage>
+        </StageBox>
+      </div>
 
-      <PanelHeader title="Preview">
+      <div className="flex flex-col items-center gap-1.5 pt-9">
         <button
           disabled={!preview}
           onClick={() => goLive()}
-          className="rounded bg-red-600 px-3 py-1 font-semibold normal-case tracking-normal text-white hover:bg-red-500 disabled:opacity-40"
+          className="flex h-[84px] w-[84px] flex-col items-center justify-center gap-1 rounded-xl bg-amber-500 text-sm font-extrabold hover:bg-amber-400 disabled:opacity-35"
+          title="Put Preview on screen (Enter)"
         >
-          Go live ⏎
+          Go live
+          <span className="text-[11px] font-semibold opacity-70">⏎ Enter</span>
         </button>
-      </PanelHeader>
-      <DraftBar />
-      <StageBox ring={`ring-1 ${draftTheme ? "ring-amber-500" : "ring-zinc-800"}`}>
-        <Stage background={previewTheme.background.color}>
-          <SlideView slide={preview ?? (draftTheme ? SAMPLE_SLIDE : null)} theme={previewTheme} blackout={false} />
-        </Stage>
-      </StageBox>
+      </div>
 
-      <PanelHeader title={live?.blackout ? "Live — BLACKOUT" : "Live"}>
-        <div className="flex gap-1 normal-case tracking-normal">
-          <Btn onClick={() => api.stepVerse(-1)}>◀ Verse</Btn>
-          <Btn onClick={() => api.stepVerse(1)}>Verse ▶</Btn>
-          <Btn onClick={() => api.setBlackout(!live?.blackout)}>{live?.blackout ? "Unblack" : "Black (B)"}</Btn>
-          <Btn onClick={() => api.clearOutput()}>Clear (Esc)</Btn>
-        </div>
-      </PanelHeader>
-      <StageBox ring={`ring-2 ${live?.slide ? "ring-red-600" : "ring-zinc-800"}`}>
-        <Stage background={theme.background.color}>
-          <SlideView slide={live?.slide ?? null} theme={theme} blackout={live?.blackout ?? false} reading={live?.reading} qr={live?.qr} />
-        </Stage>
-      </StageBox>
-
-    </section>
-  );
-}
-
-/**
- * A 16:9 preview box as wide as the column. The width comes first (block layout) and the
- * height follows from it: with aspect-ratio on a flex item, WebKit sized these boxes from their
- * height instead and made them 47 px wider than the column.
- */
-function StageBox({ ring, children }: { ring: string; children: React.ReactNode }) {
-  return (
-    <div className="flex-none p-3">
-      <div className={`relative aspect-video w-full overflow-hidden rounded-md ${ring}`}>
-        <div className="absolute inset-0">{children}</div>
+      <div className="min-w-0 space-y-2">
+        <MonitorLabel title="Live">
+          <span className={`mr-auto flex items-center gap-1.5 text-[11px] font-bold tracking-[0.12em] ${onAir ? "text-red-400" : "text-zinc-500"}`}>
+            {onAir && <span className="h-1.5 w-1.5 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444]" />}
+            <span className="hidden whitespace-nowrap min-[1300px]:inline">{status}</span>
+          </span>
+          <span className="flex flex-none gap-1">
+            <Btn onClick={() => api.stepVerse(-1)} title="Previous verse (←)">
+              ◀<span className="hidden min-[1300px]:inline"> Verse</span>
+            </Btn>
+            <Btn onClick={() => api.stepVerse(1)} title="Next verse (→)">
+              <span className="hidden min-[1300px]:inline">Verse </span>▶
+            </Btn>
+            <Btn onClick={() => api.setBlackout(!live?.blackout)} title="Black out the screen (B)" danger>
+              {live?.blackout ? "Unblack" : "Black"}
+            </Btn>
+            <Btn onClick={() => api.clearOutput()} title="Remove the verse from the screen (Esc)">
+              Clear
+            </Btn>
+          </span>
+        </MonitorLabel>
+        <StageBox ring={onAir ? "ring-2 ring-red-600 shadow-[0_0_40px_-14px_rgba(229,72,77,.6)]" : "ring-1 ring-zinc-800"}>
+          <Stage background={theme.background.color}>
+            <SlideView slide={live?.slide ?? null} theme={theme} blackout={live?.blackout ?? false} reading={live?.reading} qr={live?.qr} />
+          </Stage>
+        </StageBox>
       </div>
     </div>
   );
 }
 
-function Btn({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+function MonitorLabel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} className="rounded bg-zinc-800 px-2 py-1 text-zinc-200 hover:bg-zinc-700">
+    <div className="flex h-7 items-center justify-between gap-3">
+      <h3 className="flex-none font-display text-[13px] font-semibold uppercase tracking-[0.2em] text-amber-200">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+/** Finding a passage by hand, and stepping, blacking out or clearing what's live. */
+export function Finder() {
+  return (
+    <div data-preview-column className="flex min-w-0 flex-wrap items-start gap-2">
+      <div className="min-w-[16rem] flex-[1_1_18rem]">
+        <SearchBox />
+      </div>
+      <div className="min-w-0 flex-[1_1_26rem]">
+        <PassagePicker />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A 16:9 monitor as wide as its column. The width comes first (block layout) and the height
+ * follows from it: with aspect-ratio on a flex item, WebKit sized these boxes from their height
+ * instead and made them wider than the column.
+ */
+function StageBox({ ring, children }: { ring: string; children: React.ReactNode }) {
+  return (
+    <div className={`relative aspect-video w-full overflow-hidden rounded-lg ${ring}`}>
+      <div className="absolute inset-0">{children}</div>
+    </div>
+  );
+}
+
+function Btn({ onClick, children, title, danger }: { onClick: () => void; children: React.ReactNode; title?: string; danger?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`h-7 rounded-md border px-2.5 text-xs font-medium ${danger ? "border-red-500/50 text-red-300 hover:bg-red-500/10" : "border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-zinc-100"}`}
+    >
       {children}
     </button>
   );
@@ -106,7 +152,7 @@ function SearchBox() {
   };
 
   return (
-    <div className="relative flex-none p-3 pb-2">
+    <div className="relative">
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
@@ -116,7 +162,7 @@ function SearchBox() {
           if (e.key === "Escape") setQuery("");
         }}
         placeholder="Search: “jn 3 16”, “love is patient” or “don't worry about tomorrow”"
-        className="w-full rounded-md bg-zinc-900 px-3 py-2 text-sm outline-none ring-1 ring-zinc-800 focus:ring-amber-500"
+        className="h-10 w-full rounded-lg bg-white/[.02] px-3.5 text-sm font-light outline-none ring-1 ring-zinc-800 placeholder:text-zinc-500 focus:ring-amber-500"
       />
       {result && (
         <ul className="absolute inset-x-3 top-full z-10 mt-1 max-h-80 overflow-y-auto rounded-md bg-zinc-900 shadow-xl ring-1 ring-zinc-700">

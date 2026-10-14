@@ -4,14 +4,15 @@ import { PanelHeader } from "./TranscriptPanel";
 
 const KIND_LABEL = { explicit: "Announced", contextual: "Follow-up", quote: "Quoted", song: "Song", meaning: "Same meaning" } as const;
 
+/** The queue: everything Hearken heard, newest first. Click to preview, double-click or Live to show. */
 export function DetectionQueue() {
   const queue = useDashboard((s) => s.queue);
   const followLatest = useDashboard((s) => s.followLatest);
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-zinc-950">
+    <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800 bg-white/[.02]">
       <PanelHeader title="Detections">
-        <label className="flex items-center gap-1.5 font-normal normal-case tracking-normal">
+        <label className="flex items-center gap-1.5 font-ui text-xs font-light normal-case tracking-normal text-zinc-400" title="Each new detection goes straight into Preview">
           <input
             type="checkbox"
             checked={followLatest}
@@ -21,70 +22,85 @@ export function DetectionQueue() {
           Preview follows latest
         </label>
       </PanelHeader>
-      <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-        {queue.length === 0 && <li className="px-1 text-sm text-zinc-500">References and songs will appear here as they're spoken or sung.</li>}
+      <ul className="min-h-0 flex-1 overflow-y-auto">
+        {queue.length === 0 && <li className="border-t border-zinc-800 px-4 py-4 text-sm font-light text-zinc-500">References and songs appear here as they’re spoken or sung.</li>}
         {queue.map((d) => (
-          <DetectionCard key={d.id} d={d} />
+          <DetectionRow key={d.id} d={d} />
         ))}
       </ul>
+      <footer className="flex flex-none flex-wrap gap-x-3 gap-y-1 border-t border-zinc-800 px-4 py-2.5 text-xs font-light text-zinc-500">
+        <Key k="⏎">go live</Key>
+        <Key k="← →">verse</Key>
+        <Key k="B">black</Key>
+        <Key k="Esc">clear</Key>
+      </footer>
     </section>
   );
 }
 
-function DetectionCard({ d }: { d: Detection }) {
+function Key({ k, children }: { k: string; children: React.ReactNode }) {
+  return (
+    <span>
+      <kbd className="mr-1 rounded border border-zinc-700 px-1.5 py-px font-ui text-[11px] font-medium text-zinc-300">{k}</kbd>
+      {children}
+    </span>
+  );
+}
+
+function DetectionRow({ d }: { d: Detection }) {
   const setPreview = useDashboard((s) => s.setPreview);
   const goLive = useDashboard((s) => s.goLive);
   const dismiss = useDashboard((s) => s.dismiss);
   const isPreview = useDashboard((s) => s.preview?.id === d.slide.id);
   const isLive = useDashboard((s) => s.live?.slide?.id === d.slide.id);
   const pct = Math.round(d.confidence * 100);
-  const color = d.confidence >= 0.9 ? "bg-emerald-500" : d.confidence >= 0.7 ? "bg-amber-400" : "bg-red-400";
 
   return (
     <li
       onClick={() => setPreview(d.slide)}
       onDoubleClick={() => goLive(d.slide)}
-      className={`cursor-pointer rounded-lg border p-3 transition-colors ${
-        isLive ? "border-red-500 bg-red-950/30" : isPreview ? "border-amber-500 bg-zinc-900" : "border-zinc-800 bg-zinc-900 hover:border-zinc-600"
+      className={`relative cursor-pointer border-t border-zinc-800 px-4 py-3 transition-colors ${
+        isPreview ? "bg-amber-500/[.07] shadow-[inset_3px_0_0_var(--color-amber-500)]" : "hover:bg-white/[.03]"
       } ${d.tentative ? "animate-pulse opacity-70" : ""}`}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-lg font-semibold">{d.slide.label}</span>
-        <span className="text-xs text-zinc-400">
-          {d.planned && <span className="mr-1.5 rounded bg-sky-800 px-1 text-sky-100">Planned</span>}
-          {d.kind === "quote" && d.confidence < 0.9 ? "Possible quote" : KIND_LABEL[d.kind]}
-          {d.autoProjected && <span className="ml-1.5 rounded bg-red-600 px-1 text-white">AUTO</span>}
+        <span className="min-w-0 truncate font-scripture text-xl text-zinc-50">{d.slide.label}</span>
+        <span className="flex flex-none items-center gap-1.5 text-xs tabular-nums text-zinc-400" title={`${pct}% sure`}>
+          <span className="h-[3px] w-8 overflow-hidden rounded bg-zinc-700">
+            <span className={`block h-full ${d.confidence >= 0.7 ? "bg-amber-500" : "bg-amber-700"}`} style={{ width: `${pct}%` }} />
+          </span>
+          {pct}%
         </span>
       </div>
-      <p className="mt-1 line-clamp-2 text-sm text-zinc-400">{d.slide.verses[0]?.text}</p>
-      <div className="mt-2 flex items-center gap-2 text-xs text-zinc-500">
-        <div className="h-1.5 w-20 overflow-hidden rounded bg-zinc-800">
-          <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
-        </div>
-        <span className="font-mono">{pct}%</span>
-        <span className="font-mono">{d.latencyMs.toFixed(0)} ms</span>
-        <span className="truncate italic">“{d.matched}”</span>
-        <div className="ml-auto flex gap-1">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              void goLive(d.slide);
-            }}
-            className="rounded bg-red-600 px-2 py-0.5 font-semibold text-white hover:bg-red-500"
-          >
-            Live
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              dismiss(d.id);
-            }}
-            className="rounded px-1.5 py-0.5 hover:bg-zinc-800"
-            aria-label="Dismiss"
-          >
-            ✕
-          </button>
-        </div>
+      <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs font-light text-zinc-500">
+        <span className="font-medium text-zinc-300">{d.kind === "quote" && d.confidence < 0.9 ? "Possible quote" : KIND_LABEL[d.kind]}</span>
+        <span className="min-w-0 truncate">· “{d.matched}”</span>
+        {d.planned && <span>· in plan</span>}
+        {d.autoProjected && <span className="font-medium text-amber-300">· shown automatically</span>}
+        {isLive && <span className="font-semibold tracking-wider text-red-400">· ON SCREEN</span>}
+      </p>
+      <p className="mt-1 line-clamp-2 font-scripture text-[15px] italic leading-snug text-zinc-300">{d.slide.verses[0]?.text}</p>
+      <div className="mt-2 flex items-center justify-end gap-1 text-xs">
+        <span className="mr-auto font-light tabular-nums text-zinc-600">{(d.latencyMs / 1000).toFixed(1)} s</span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            dismiss(d.id);
+          }}
+          className="rounded px-2 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+          aria-label="Dismiss"
+        >
+          Dismiss
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            void goLive(d.slide);
+          }}
+          className="rounded bg-amber-500 px-2.5 py-1 font-semibold hover:bg-amber-400"
+        >
+          Live
+        </button>
       </div>
     </li>
   );

@@ -125,11 +125,11 @@ export function PassagePicker() {
     else void submit(false);
   };
 
-  const num = "w-12 rounded-md bg-zinc-900 px-2 py-1.5 text-sm tabular-nums outline-none ring-1 ring-zinc-800 focus:ring-amber-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none";
+  const num = "h-10 w-12 rounded-lg bg-white/[.02] px-2 text-sm tabular-nums outline-none ring-1 ring-zinc-800 focus:ring-amber-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none";
   const rangeLong = from && to && vTo - vFrom + 1 > MAX_SLIDE_VERSES;
 
   return (
-    <div className="flex-none space-y-1.5 border-b border-zinc-800 px-3 pb-3">
+    <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
         <BookCombobox
           books={books}
@@ -182,22 +182,6 @@ export function PassagePicker() {
           disabled={!from}
           className={num}
         />
-        <button
-          onClick={() => void submit(false)}
-          disabled={!ready}
-          className="rounded bg-zinc-800 px-2.5 py-1.5 text-xs font-medium hover:bg-zinc-700 disabled:opacity-40"
-          title="Show in Preview (Enter)"
-        >
-          Preview
-        </button>
-        <button
-          onClick={() => void submit(true)}
-          disabled={!ready}
-          className="rounded bg-red-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-40"
-          title="Send to the screen (⌘/Ctrl+Enter)"
-        >
-          Live
-        </button>
       </div>
       {(problem || rangeLong) && (
         <p className={`text-xs ${problem ? "text-red-400" : "text-zinc-500"}`}>
@@ -266,7 +250,7 @@ function BookCombobox({ books, value, onPick }: { books: BookInfo[]; value: Book
             setQuery("");
           }
         }}
-        className="w-full rounded-md bg-zinc-900 px-2 py-1.5 text-sm outline-none ring-1 ring-zinc-800 focus:ring-amber-500"
+        className="h-10 w-full rounded-lg bg-white/[.02] px-3 text-sm outline-none ring-1 ring-zinc-800 placeholder:text-zinc-500 focus:ring-amber-500"
       />
       {open && (
         <ul ref={listRef} id={listId} role="listbox" className="absolute inset-x-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-md bg-zinc-900 py-1 shadow-xl ring-1 ring-zinc-700">

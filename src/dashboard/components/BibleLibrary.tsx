@@ -52,11 +52,11 @@ export function BibleLibrary() {
           setAlignRight(r.left + r.width / 2 > window.innerWidth / 2);
           setOpen(!open);
         }}
-        className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700" title="Download Bibles in other languages">
-        ＋ Bibles
+        className="h-9 rounded-lg px-2 text-sm font-light hover:bg-white/[.06] min-[1300px]:px-3 text-zinc-300" title="Download Bibles in other languages">
+        Bibles
       </button>
       {open && (
-        <div className={`absolute ${alignRight ? "right-0" : "left-0"} top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[26rem] max-w-[calc(100vw-2rem)] space-y-2 overflow-y-auto overscroll-contain rounded-lg bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700`}>
+        <div className={`absolute ${alignRight ? "right-0" : "left-0"} top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[26rem] max-w-[calc(100vw-2rem)] space-y-2 overflow-y-auto overscroll-contain rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl`}>
           <div>
             <h3 className="font-semibold">Bible library</h3>
             <p className="text-xs text-zinc-400">

@@ -24,6 +24,8 @@ export interface TranscriptLine {
   inferenceMs: number;
   /** Replaced by the accuracy pass. */
   refined: boolean;
+  /** When it was heard (ms since epoch). */
+  at: number;
 }
 
 interface DashboardState {
@@ -105,13 +107,13 @@ export const useDashboard = create<DashboardState>((set, get) => ({
           set({ partial: t.text ? t : null });
           return;
         }
-        const line = { utteranceId: t.utteranceId, text: t.text, confidence: t.confidence, inferenceMs: t.inferenceMs, refined: t.refined };
+        const line = { utteranceId: t.utteranceId, text: t.text, confidence: t.confidence, inferenceMs: t.inferenceMs, refined: t.refined, at: Date.now() };
         if (t.refined) {
           // The accuracy pass replaces the quick text of the same sentence (or fills it in).
           if (!t.text) return;
           set((s) => {
             const i = s.finals.findIndex((f) => f.utteranceId === t.utteranceId);
-            if (i >= 0) return { finals: s.finals.map((f, j) => (j === i ? line : f)) };
+            if (i >= 0) return { finals: s.finals.map((f, j) => (j === i ? { ...line, at: f.at } : f)) };
             return { finals: [...s.finals, line].sort((a, b) => a.utteranceId - b.utteranceId).slice(-MAX_FINALS) };
           });
           return;

@@ -1,6 +1,50 @@
 @import "tailwindcss";
+@import "../assets/fonts/ui-fonts.css";
+@import "../assets/fonts/fonts.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* The website's look: a sanctuary at night, one gold accent, red only for what's on screen.
+   The components use Tailwind's zinc/amber names; redefining them restyles the whole app. */
+@theme {
+  --font-ui: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Cinzel", "Times New Roman", serif;
+  --font-scripture: "EB Garamond", Garamond, Georgia, serif;
+
+  --color-zinc-50: #fbf7ef;
+  --color-zinc-100: #f4ede1;
+  --color-zinc-200: #ddd4c4;
+  --color-zinc-300: #cbc1b0;
+  --color-zinc-400: #a99f8f;
+  --color-zinc-500: #8c8373;
+  --color-zinc-600: #4a4350;
+  --color-zinc-700: #2c2733;
+  --color-zinc-800: #1e1a25;
+  --color-zinc-900: #120f18;
+  --color-zinc-950: #07050c;
+
+  /* Gold: the single accent (emerald and sky were secondary accents; they follow it). */
+  --color-amber-100: #fdf3dc;
+  --color-amber-200: #f8e0a4;
+  --color-amber-300: #f3d08a;
+  --color-amber-400: #eec06a;
+  --color-amber-500: #e9b24c;
+  --color-amber-600: #d9a03a;
+  --color-amber-700: #b9852c;
+  --color-amber-950: #2a1d08;
+  --color-emerald-300: #f3d08a;
+  --color-emerald-400: #eec06a;
+  --color-emerald-500: #e9b24c;
+  --color-emerald-600: #d9a03a;
+  --color-emerald-700: #b9852c;
+  --color-emerald-950: #2a1d08;
+  --color-sky-300: #f3d08a;
+  --color-sky-400: #eec06a;
+  --color-sky-500: #e9b24c;
+  --color-sky-600: #d9a03a;
+  --color-sky-700: #b9852c;
+  --color-sky-800: #8a6421;
+}
 
 html,
 body,
@@ -9,6 +53,13 @@ body,
 }
 
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-ui);
+  background: var(--color-zinc-950);
   overflow: hidden;
+}
+
+/* Text on gold must be dark to be readable (components were written for darker accents). */
+.bg-amber-500, .bg-amber-600, .bg-amber-700,
+.bg-emerald-600, .bg-emerald-700, .bg-sky-600, .bg-sky-700 {
+  color: #1d1200;
 }

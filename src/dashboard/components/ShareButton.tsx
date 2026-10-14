@@ -67,12 +67,12 @@ export function ShareButton() {
     <div ref={rootRef} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className={`rounded px-3 py-1 font-medium ${info?.enabled || enabled ? "bg-sky-700 hover:bg-sky-600" : "bg-zinc-700 hover:bg-zinc-600"}`}
+        className={`h-9 rounded-lg px-2 text-sm font-light hover:bg-white/[.06] min-[1300px]:px-3 ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
       >
-        Share{enabled ? " ●" : ""}
+        Share{enabled && <span className="ml-1.5 inline-block h-1.5 w-1.5 -translate-y-px rounded-full bg-amber-500" />}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[22rem] space-y-3 overflow-y-auto overscroll-contain rounded-lg bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700">
+        <div className="absolute right-0 top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[22rem] space-y-3 overflow-y-auto overscroll-contain rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
           <label className="flex items-center justify-between gap-3">
             <span>
               <span className="font-semibold">Share on the local network</span>
