@@ -16,6 +16,13 @@ use super::{books, numbers, ScriptureRef, Versification};
 
 /// How long "verse 18" / "chapter 5" may refer back to the last explicit reference.
 const CONTEXT_TTL: Duration = Duration::from_secs(180);
+/// "…from verse 10" this soon after the chapter was named is as good as an announcement.
+const FRESH_CONTEXT: Duration = Duration::from_secs(30);
+/// Speech recognition splits sentences at short pauses ("Let's begin from verse." / "10.").
+/// A sentence that ends mid-reference is read together with the next one if it follows this soon.
+const STITCH_WINDOW: Duration = Duration::from_secs(8);
+/// Words a reference can't end on: after these, the rest is still to come.
+const DANGLING: &[&str] = &["chapter", "chapters", "verse", "verses", "vs", "v", "from", "to", "through", "thru", "till", "until", "and", "2", "too"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -64,7 +71,8 @@ struct Patterns {
     aliases: HashMap<String, (u8, bool)>,
 }
 
-const RANGE: &str = r"(?:\s*(?P<rsep>-|to|through|thru|till|until|and)\s*(?P<ve>\d{1,3}))?";
+// "to" is often heard as "2" or "too" ("verse 10 2 12"); as a separator it needs spaces either side.
+const RANGE: &str = r"(?:(?:\s*(?P<rsep>-|to|through|thru|till|until|and)\s*|\s+(?:2|too)\s+)(?P<ve>\d{1,3}))?";
 // "-" between chapter and verse is Whisper writing "John 3-16" / "three-sixteen" for a spoken "John 3 16".
 const SEP: &str = r"(?P<sep>\s*:\s*|\s*-\s*|\s+(?:and\s+)?(?:verses?|vs|v)\s+|\s+)";
 /// Followed by numbers these are keywords or everyday speech ("hymn number 4 12"), never
@@ -128,6 +136,8 @@ enum Hit<'t> {
 #[derive(Default)]
 pub struct ReferenceParser {
     context: Option<Context>,
+    /// Recent finished sentences, normalised, for references split across them.
+    recent: Vec<(Instant, String)>,
 }
 
 impl ReferenceParser {
@@ -137,7 +147,18 @@ impl ReferenceParser {
 
     pub fn parse(&mut self, raw: &str, is_final: bool, v11n: &Versification) -> Vec<ParsedRef> {
         let p = &*PATTERNS;
-        let text = numbers::normalize(raw);
+        let current = numbers::normalize(raw);
+        // A reference split by a pause: read the end of the previous sentence with this one, and
+        // keep only what reaches into this one (the rest was handled last time).
+        let prefix = self.dangling_prefix(&p.aliases);
+        let (text, offset) = if prefix.is_empty() { (current.clone(), 0) } else { (format!("{prefix} {current}"), prefix.len() + 1) };
+        if is_final {
+            self.recent.retain(|(at, _)| at.elapsed() < STITCH_WINDOW);
+            self.recent.push((Instant::now(), current.clone()));
+            if self.recent.len() > 3 {
+                self.recent.remove(0);
+            }
+        }
         let text_end = text.len();
 
         let mut hits: Vec<(usize, Hit)> = Vec::new();
@@ -186,6 +207,9 @@ impl ReferenceParser {
                 Hit::Chapter(c) | Hit::Verse(c) => (c, RefKind::Contextual),
             };
             let m = caps.get(0).unwrap();
+            if m.end() <= offset {
+                continue; // entirely in the previous sentence
+            }
             let tentative = !is_final && m.end() >= text_end;
             let vs = num(caps, "vs");
             let ve = num(caps, "ve");
@@ -242,7 +266,8 @@ impl ReferenceParser {
                 Hit::Verse(_) => {
                     let ctx = self.live_context();
                     ctx.and_then(|ctx| {
-                        build(ctx.book_id, ctx.chapter, vs, ve, and_range, v11n).filter(|r| r.verse_start.is_some()).map(|r| (r, 0.75))
+                        let conf = if ctx.at.elapsed() < FRESH_CONTEXT { 0.85 } else { 0.75 };
+                        build(ctx.book_id, ctx.chapter, vs, ve, and_range, v11n).filter(|r| r.verse_start.is_some()).map(|r| (r, conf))
                     })
                 }
             };
@@ -254,6 +279,22 @@ impl ReferenceParser {
             out.push(ParsedRef { reference, confidence: confidence.clamp(0.0, 1.0), tentative, kind, matched: m.as_str().to_owned() });
         }
         out
+    }
+
+    /// The last few words of the previous sentence(s), if they stop mid-reference ("…from
+    /// verse", "…Esther chapter 3", "…verse 10 to") and were said within the stitch window.
+    fn dangling_prefix(&self, aliases: &HashMap<String, (u8, bool)>) -> String {
+        let Some((last_at, _)) = self.recent.last() else { return String::new() };
+        if last_at.elapsed() >= STITCH_WINDOW {
+            return String::new();
+        }
+        let words: Vec<&str> = self.recent.iter().filter(|(at, _)| at.elapsed() < STITCH_WINDOW).flat_map(|(_, t)| t.split_whitespace()).collect();
+        let Some(&last) = words.last() else { return String::new() };
+        let dangling = DANGLING.contains(&last) || last.chars().all(|c| c.is_ascii_digit() || c == ':') || aliases.contains_key(last);
+        if !dangling {
+            return String::new();
+        }
+        words[words.len().saturating_sub(10)..].join(" ")
     }
 
     fn live_context(&self) -> Option<Context> {
@@ -319,6 +360,7 @@ mod tests {
             (2, 3, 22),
             (5, 6, 25),   // Deuteronomy 6
             (60, 5, 14),  // 1 Peter 5
+            (17, 3, 15),  // Esther 3
             (66, 21, 27), // Revelation 21
             (35, 2, 20),  // Habakkuk 2
             (26, 37, 28), // Ezekiel 37
@@ -445,6 +487,44 @@ mod tests {
         }
         // Mishearings show up when typing in the passage picker too.
         assert!(books::all_aliases().iter().any(|(a, id, _)| a == "exodos" && *id == 2));
+    }
+
+    #[test]
+    fn references_split_by_pauses() {
+        let mut m = HashMap::new();
+        m.insert((17u8, 3u16), 15u16); // Esther 3
+        let v = Versification::from_map(m);
+        let last = |p: &mut ReferenceParser, parts: &[&str]| {
+            let mut out = Vec::new();
+            for part in parts {
+                out = p.parse(part, true, &v);
+            }
+            out
+        };
+        // What speech recognition actually produced for these, sentence by sentence.
+        let r = last(&mut ReferenceParser::new(), &["Esther chapter 3.", "Let's begin from verse.", "10."]);
+        assert_eq!(r.first().map(|r| r.reference.clone()), Some(sr(17, 3, Some(10), None)));
+        assert!(r[0].confidence >= 0.85, "chapter just named: {}", r[0].confidence);
+        let r = last(&mut ReferenceParser::new(), &["Esther chapter 3.", "From verse 10.", "2.", "12."]);
+        assert_eq!(r.first().map(|r| r.reference.clone()), Some(sr(17, 3, Some(10), Some(12))), "{r:?}");
+        let r = last(&mut ReferenceParser::new(), &["Turn with me to Esther.", "Chapter 3, verse 10."]);
+        assert_eq!(r.first().map(|r| r.reference.clone()), Some(sr(17, 3, Some(10), None)));
+        // Words in between, in one sentence.
+        assert_eq!(parse_one("Esther chapter 3, let's begin from verse 10").reference, sr(17, 3, None, None));
+        let r = ReferenceParser::new().parse("Esther chapter 3, let's begin from verse 10", true, &v);
+        assert_eq!(r.last().map(|r| r.reference.clone()), Some(sr(17, 3, Some(10), None)));
+        // "to" heard as "2" or "too".
+        let r = ReferenceParser::new().parse("Esther 3 verse 10 2 12", true, &v);
+        assert_eq!(r[0].reference, sr(17, 3, Some(10), Some(12)));
+        // Esther misheard.
+        assert_eq!(ReferenceParser::new().parse("Asta 3-10", true, &v)[0].reference, sr(17, 3, Some(10), None));
+        // An ordinary sentence ending in a number isn't glued to the next one's verse.
+        let r = last(&mut ReferenceParser::new(), &["We were there for 3 years.", "God is good."]);
+        assert!(r.is_empty());
+        // Nothing is detected twice: the previous sentence's reference isn't reported again.
+        let mut p = ReferenceParser::new();
+        p.parse("Read Esther 3 10 and", true, &v);
+        assert!(p.parse("let us pray", true, &v).is_empty());
     }
 
     #[test]
