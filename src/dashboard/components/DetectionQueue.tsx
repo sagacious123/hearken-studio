@@ -79,7 +79,7 @@ function DetectionRow({ d }: { d: Detection }) {
         {d.autoProjected && <span className="font-medium text-amber-300">· shown automatically</span>}
         {isLive && <span className="font-semibold tracking-wider text-red-400">· ON SCREEN</span>}
       </p>
-      <p className="mt-1 line-clamp-2 font-scripture text-[15px] italic leading-snug text-zinc-300">{d.slide.verses[0]?.text}</p>
+      <p className="mt-1 line-clamp-2 text-sm font-light leading-snug text-zinc-300">{d.slide.verses[0]?.text}</p>
       <div className="mt-2 flex items-center justify-end gap-1 text-xs">
         <span className="mr-auto font-light tabular-nums text-zinc-600">{(d.latencyMs / 1000).toFixed(1)} s</span>
         <button

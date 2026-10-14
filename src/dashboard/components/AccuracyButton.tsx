@@ -11,11 +11,14 @@ type Progress = Record<string, { received: number; total: number; phase: "downlo
  * re-checks every finished sentence (the "accuracy pass"). Larger models are downloaded here
  * rather than bundled. Also the vocabulary list of names and words to listen for.
  */
-export function AccuracyButton() {
+/** Opened from Settings (controlled); its own button shows only while there is news: a download or a warning. */
+export function AccuracyButton({ open: openProp, onOpenChange, showTrigger = true }: { open?: boolean; onOpenChange?: (open: boolean) => void; showTrigger?: boolean } = {}) {
   const { settings, saveSettings, running, info, profile } = useDashboard(
     useShallow((s) => ({ settings: s.settings, saveSettings: s.saveSettings, running: s.running, info: s.info, profile: s.profile })),
   );
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const setOpen = (o: boolean) => (onOpenChange ? onOpenChange(o) : setOpenState(o));
   const rootRef = useDismiss<HTMLDivElement>(open, () => setOpen(false));
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [progress, setProgress] = useState<Progress>({});
@@ -60,14 +63,14 @@ export function AccuracyButton() {
 
   return (
     <div ref={rootRef} className="relative">
-      <button
+      {(showTrigger || tooSlow || downloading.length > 0) && <button
         onClick={() => setOpen(!open)}
         className={`h-9 rounded-lg px-2 text-sm font-light hover:bg-white/[.06] min-[1300px]:px-3 ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
         title="Transcription accuracy and vocabulary"
       >
         Accuracy{downloading.length ? " ↓" : ""}
         {tooSlow && <span className="ml-1 text-amber-300">⚠</span>}
-      </button>
+      </button>}
       {open && (
         <div className="absolute right-0 top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[26rem] space-y-4 overflow-y-auto overscroll-contain rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
           <div>

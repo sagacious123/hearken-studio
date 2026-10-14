@@ -44,35 +44,37 @@ export function ControlBar() {
     api.listMonitors().then(setMonitors).catch(console.error);
   }, []);
 
+  const [panel, setPanel] = useState<"accuracy" | "bibles" | null>(null);
   const settings = s.settings;
   if (!settings) return <header className="mx-3 mt-3 h-[60px] rounded-2xl border border-zinc-800" />;
 
   const select = "h-9 rounded-lg border border-zinc-800 bg-transparent px-2.5 text-sm font-light text-zinc-100 outline-none hover:border-zinc-600 focus:border-amber-500";
+  const box = "flex h-9 min-w-0 items-center rounded-lg border border-zinc-800 hover:border-zinc-600 focus-within:border-amber-500";
 
   return (
-    // A floating glass bar, as on the website. Only what's used during the service is here;
-    // the rest is under Settings.
-    <header className="relative z-20 mx-3 mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-[rgba(20,16,30,.42)] py-2.5 pl-4 pr-2.5 text-sm shadow-[0_10px_40px_-12px_rgba(0,0,0,.7),inset_0_1px_0_rgba(255,255,255,.06)] backdrop-blur-xl backdrop-saturate-150">
-      <div className="mr-2 flex items-center gap-2.5 font-display text-base font-semibold tracking-[0.14em]">
+    // A floating glass bar, as on the website, all on one line. Only what's used during the
+    // service is here; everything else is under Settings.
+    <header className="relative z-20 mx-3 mt-3 flex flex-nowrap items-center gap-2 rounded-2xl border border-white/10 bg-[rgba(20,16,30,.42)] py-2.5 pl-4 pr-2.5 text-sm shadow-[0_10px_40px_-12px_rgba(0,0,0,.7),inset_0_1px_0_rgba(255,255,255,.06)] backdrop-blur-xl backdrop-saturate-150">
+      <div className="mr-2 flex flex-none items-center gap-2.5 font-display text-base font-semibold tracking-[0.14em]">
         <svg viewBox="0 0 32 32" className="h-5 w-5" aria-hidden>
           <path d="M16 3c3 4.5 5 7.2 5 10.2A5 5 0 0 1 16 18a5 5 0 0 1-5-4.8C11 10.2 13 7.5 16 3z" fill="#e9b24c" />
           <path d="M6 22c3.3-1.6 6.7-1.6 10 0 3.3-1.6 6.7-1.6 10 0v6c-3.3-1.6-6.7-1.6-10 0-3.3-1.6-6.7-1.6-10 0z" fill="#f4ede1" />
         </svg>
-        <span className="hidden min-[1300px]:inline">HEARKEN</span>
+        <span className="hidden min-[1250px]:inline">HEARKEN</span>
       </div>
 
       <ListenButton running={s.running} starting={s.starting} benchProgress={s.benchProgress} onToggle={() => (s.running ? s.stop() : s.start())} />
 
-      <div className="flex h-9 items-center gap-2 rounded-lg border border-zinc-800 pl-1 pr-3">
-        <select
+      <div className={`${box} gap-2.5 pl-3 pr-2.5`} title={s.running ? "Stop listening to change the input" : "Sound input"}>
+        <Dropdown
           disabled={s.running}
           onMouseEnter={refreshDevices}
           onFocus={refreshDevices}
           value={settings.inputDevice ?? ""}
-          onChange={(e) => s.saveSettings({ inputDevice: e.target.value || null })}
-          className="h-8 max-w-36 bg-transparent px-1.5 text-sm font-medium text-zinc-100 outline-none disabled:opacity-70 min-[1300px]:max-w-52"
-          title={s.running ? "Stop listening to change the input" : "Sound input"}
-          aria-label="Sound input"
+          onChange={(v) => s.saveSettings({ inputDevice: v || null })}
+          label="Sound input"
+          display={devices.find((d) => d.id === settings.inputDevice)?.name ?? (settings.inputDevice ? "Saved input" : "System default input")}
+          className="max-w-44 font-semibold min-[1400px]:max-w-56"
         >
           <option value="">System default input</option>
           {devices.map((d) => (
@@ -81,32 +83,29 @@ export function ControlBar() {
               {d.name}
             </option>
           ))}
-        </select>
+        </Dropdown>
         <LevelMeter />
+        <span className="pointer-events-none text-[10px] text-zinc-500">▼</span>
       </div>
 
-      <div className="flex h-9 items-center rounded-lg border border-zinc-800 px-1">
-        <select
-          value={settings.translation}
-          onChange={(e) => s.saveSettings({ translation: e.target.value })}
-          className="h-8 bg-transparent px-1.5 text-sm font-medium text-zinc-100 outline-none"
-          aria-label="Translation"
-        >
+      <div className={`${box} gap-1.5 pl-3 pr-2.5`}>
+        <Dropdown value={settings.translation} onChange={(v) => s.saveSettings({ translation: v })} label="Translation" display={settings.translation} className="font-semibold">
           {s.translations.map((t) => (
             <option key={t.code} value={t.code} title={t.name}>
               {t.code}
             </option>
           ))}
-        </select>
-        <span className="text-zinc-600">+</span>
-        <select
+        </Dropdown>
+        <span className="text-zinc-500">+</span>
+        <Dropdown
           value={settings.secondaryTranslation ?? ""}
-          onChange={(e) => s.saveSettings({ secondaryTranslation: e.target.value || null })}
-          className="h-8 bg-transparent px-1.5 text-sm font-light text-zinc-300 outline-none"
+          onChange={(v) => s.saveSettings({ secondaryTranslation: v || null })}
+          label="Side by side"
           title="Show a second translation (or language) next to the first"
-          aria-label="Side by side"
+          display={settings.secondaryTranslation ?? "Side by side"}
+          className={settings.secondaryTranslation ? "font-semibold" : "font-light !text-zinc-500"}
         >
-          <option value="">Side by side: none</option>
+          <option value="">Side by side</option>
           {s.translations
             .filter((t) => t.code !== settings.translation)
             .map((t) => (
@@ -114,42 +113,80 @@ export function ControlBar() {
                 {t.code}
               </option>
             ))}
-        </select>
+        </Dropdown>
+        <span className="pointer-events-none text-[10px] text-zinc-500">▼</span>
       </div>
 
-      <div className="ml-auto flex flex-wrap items-center gap-0.5">
-        <BibleLibrary />
-        <button
-          data-style-toggle
-          onClick={() => s.setStyleOpen(!s.styleOpen)}
-          className={`h-9 rounded-lg px-2 text-sm font-light hover:bg-white/[.06] min-[1300px]:px-3 ${s.styleOpen ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
-          title="Fonts, colours and backgrounds"
-        >
-          Style
-        </button>
-        <AccuracyButton />
+      <div className="ml-auto flex flex-none items-center gap-0.5">
+        {/* Opened from Settings; each shows its own button only while there's news (a download, a warning). */}
+        <BibleLibrary open={panel === "bibles"} onOpenChange={(o) => setPanel(o ? "bibles" : null)} showTrigger={false} />
+        <AccuracyButton open={panel === "accuracy"} onOpenChange={(o) => setPanel(o ? "accuracy" : null)} showTrigger={false} />
         <ShareButton />
         <ScreensButton monitors={monitors} />
-        <SettingsMenu monitors={monitors} monitor={monitor} setMonitor={setMonitor} select={select} />
-        <div className="ml-1.5 flex">
-          <button
-            onClick={() => api.openOutputWindow(monitor)}
-            className="h-9 rounded-l-lg bg-amber-500 px-3.5 text-sm font-bold hover:bg-amber-400"
-            title="Open the projector output on the chosen display (Settings → Output display)"
-          >
-            Open<span className="hidden min-[1300px]:inline"> output</span>
-          </button>
-          <button
-            onClick={() => api.closeOutputWindow()}
-            className="h-9 rounded-r-lg border-l border-amber-700 bg-amber-500 px-2.5 text-sm font-bold hover:bg-amber-400"
-            title="Close the output"
-            aria-label="Close the output"
-          >
-            ✕
-          </button>
-        </div>
+        <SettingsMenu
+          monitors={monitors}
+          monitor={monitor}
+          setMonitor={setMonitor}
+          select={select}
+          onStyle={() => s.setStyleOpen(true)}
+          onPanel={(p) => setPanel(p)}
+        />
+        <button
+          onClick={() => api.openOutputWindow(monitor)}
+          className="ml-1.5 h-9 whitespace-nowrap rounded-lg bg-amber-500 px-3.5 text-sm font-bold hover:bg-amber-400"
+          title="Open the projector output on the chosen display (Settings → Output display). Press Esc on it to close it."
+        >
+          Open output
+        </button>
       </div>
     </header>
+  );
+}
+
+/**
+ * A select drawn like the rest of the bar: the chosen value in our type, as wide as that value
+ * (a native select is as wide as its longest option), with the native menu on top, invisible.
+ */
+function Dropdown({
+  value,
+  display,
+  onChange,
+  label,
+  title,
+  className = "",
+  disabled,
+  onMouseEnter,
+  onFocus,
+  children,
+}: {
+  value: string;
+  display: string;
+  onChange: (v: string) => void;
+  label: string;
+  title?: string;
+  className?: string;
+  disabled?: boolean;
+  onMouseEnter?: () => void;
+  onFocus?: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <span className="relative inline-flex h-8 min-w-0 items-center" title={title}>
+      <span aria-hidden className={`truncate text-sm text-zinc-100 ${className}`}>
+        {display}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={label}
+        disabled={disabled}
+        onMouseEnter={onMouseEnter}
+        onFocus={onFocus}
+        className="absolute inset-0 w-full cursor-pointer appearance-none opacity-0 disabled:cursor-default"
+      >
+        {children}
+      </select>
+    </span>
   );
 }
 
@@ -174,7 +211,7 @@ function ListenButton({ running, starting, benchProgress, onToggle }: { running:
       disabled={starting}
       onClick={onToggle}
       title={running ? "Stop listening" : "Start listening"}
-      className={`flex h-9 items-center gap-2.5 rounded-lg px-3.5 text-sm font-semibold disabled:opacity-60 ${
+      className={`flex h-9 flex-none items-center gap-2.5 whitespace-nowrap rounded-lg px-3.5 text-sm font-semibold disabled:opacity-60 ${
         running ? "border border-amber-500/45 bg-amber-500/[.14] text-amber-200 hover:bg-amber-500/25" : "bg-amber-500 hover:bg-amber-400"
       }`}
     >
@@ -186,7 +223,21 @@ function ListenButton({ running, starting, benchProgress, onToggle }: { running:
 }
 
 /** Settings usually chosen before the service starts. */
-function SettingsMenu({ monitors, monitor, setMonitor, select }: { monitors: MonitorInfo[]; monitor: number | null; setMonitor: (m: number | null) => void; select: string }) {
+function SettingsMenu({
+  monitors,
+  monitor,
+  setMonitor,
+  select,
+  onStyle,
+  onPanel,
+}: {
+  monitors: MonitorInfo[];
+  monitor: number | null;
+  setMonitor: (m: number | null) => void;
+  select: string;
+  onStyle: () => void;
+  onPanel: (p: "accuracy" | "bibles") => void;
+}) {
   const settings = useDashboard((st) => st.settings);
   const saveSettings = useDashboard((st) => st.saveSettings);
   const [open, setOpen] = useState(false);
@@ -196,7 +247,7 @@ function SettingsMenu({ monitors, monitor, setMonitor, select }: { monitors: Mon
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex h-9 items-center gap-1.5 rounded-lg px-2 text-sm font-light min-[1300px]:px-3 hover:bg-white/[.06] ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
+        className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm font-light hover:bg-white/[.06] ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
         aria-expanded={open}
         aria-label="Settings"
         title="Settings"
@@ -205,11 +256,16 @@ function SettingsMenu({ monitors, monitor, setMonitor, select }: { monitors: Mon
           <circle cx="12" cy="12" r="3" />
           <path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9l2.1 2.1m10 10 2.1 2.1M4.9 19.1 7 17m10-10 2.1-2.1" />
         </svg>
-        <span className="hidden min-[1300px]:inline">Settings</span>
+        <span className="hidden min-[1250px]:inline">Settings</span>
       </button>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-2 w-[22rem] space-y-4 rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
-          <div className="space-y-2.5">
+          <div className="grid gap-0.5">
+            <MenuItem onClick={() => { setOpen(false); onStyle(); }} hint="Fonts, colours, backgrounds">Style</MenuItem>
+            <MenuItem onClick={() => { setOpen(false); onPanel("accuracy"); }} hint="Models, names to listen for, search by meaning">Transcription accuracy</MenuItem>
+            <MenuItem onClick={() => { setOpen(false); onPanel("bibles"); }} hint="Yoruba, Igbo, Hausa and more">Bibles</MenuItem>
+          </div>
+          <div className="space-y-2.5 border-t border-zinc-800 pt-3">
             <h3 className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">During the service</h3>
             <Toggle checked={settings.followReading} onChange={(v) => saveSettings({ followReading: v })} label="Follow reading" title="Highlight the live passage as it's read and move to the next verse automatically" />
             <Toggle checked={settings.lyricsDetection} onChange={(v) => saveSettings({ lyricsDetection: v })} label="Follow worship songs" title="Recognise songs from your library as they're sung and follow them section by section" />
@@ -239,6 +295,9 @@ function SettingsMenu({ monitors, monitor, setMonitor, select }: { monitors: Mon
                 </option>
               ))}
             </select>
+            <button onClick={() => void api.closeOutputWindow()} className="text-xs font-light text-zinc-400 underline-offset-2 hover:text-zinc-100 hover:underline">
+              Close the output window
+            </button>
           </label>
           <div className="space-y-1.5 border-t border-zinc-800 pt-3">
             <span className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">Speech engine</span>
@@ -247,6 +306,15 @@ function SettingsMenu({ monitors, monitor, setMonitor, select }: { monitors: Mon
         </div>
       )}
     </div>
+  );
+}
+
+function MenuItem({ onClick, hint, children }: { onClick: () => void; hint: string; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick} className="flex items-baseline justify-between gap-3 rounded-lg px-2 py-2 text-left hover:bg-white/[.06]">
+      <span className="font-medium text-zinc-100">{children}</span>
+      <span className="truncate text-xs font-light text-zinc-500">{hint}</span>
+    </button>
   );
 }
 

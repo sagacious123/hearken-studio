@@ -8,13 +8,15 @@ import { useDismiss } from "../useDismiss";
  * downloaded once from eBible.org and used offline afterwards, for the screen, side by side,
  * and on congregation phones.
  */
-export function BibleLibrary() {
-  const [open, setOpen] = useState(false);
+export function BibleLibrary({ open: openProp, onOpenChange, showTrigger = true }: { open?: boolean; onOpenChange?: (open: boolean) => void; showTrigger?: boolean } = {}) {
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const setOpen = (o: boolean) => (onOpenChange ? onOpenChange(o) : setOpenState(o));
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [busy, setBusy] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
   // Open towards the side with room: the toolbar wraps, so the button can be anywhere.
-  const [alignRight, setAlignRight] = useState(false);
+  const [alignRight, setAlignRight] = useState(!showTrigger);
   const ref = useDismiss<HTMLDivElement>(open, () => setOpen(false));
 
   useEffect(() => {
@@ -46,7 +48,7 @@ export function BibleLibrary() {
 
   return (
     <div ref={ref} className="relative">
-      <button
+      {showTrigger && <button
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           setAlignRight(r.left + r.width / 2 > window.innerWidth / 2);
@@ -54,7 +56,7 @@ export function BibleLibrary() {
         }}
         className="h-9 rounded-lg px-2 text-sm font-light hover:bg-white/[.06] min-[1300px]:px-3 text-zinc-300" title="Download Bibles in other languages">
         Bibles
-      </button>
+      </button>}
       {open && (
         <div className={`absolute ${alignRight ? "right-0" : "left-0"} top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[26rem] max-w-[calc(100vw-2rem)] space-y-2 overflow-y-auto overscroll-contain rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl`}>
           <div>

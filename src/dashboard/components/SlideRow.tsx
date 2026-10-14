@@ -20,7 +20,7 @@ export function SlideRow({ slide, title, badge }: { slide: Slide; title?: string
           <span className="font-scripture text-lg leading-tight text-zinc-50">{title ?? slide.label}</span>
           {badge && <span className="text-xs text-zinc-500">{badge}</span>}
         </div>
-        <p className="mt-0.5 line-clamp-2 font-scripture text-[15px] italic leading-snug text-zinc-400">{slide.verses.map((v) => v.text).join(slide.song ? " / " : " ")}</p>
+        <p className="mt-0.5 line-clamp-2 text-sm font-light leading-snug text-zinc-300">{slide.verses.map((v) => v.text).join(slide.song ? " / " : " ")}</p>
       </div>
       <button
         onClick={(e) => {
