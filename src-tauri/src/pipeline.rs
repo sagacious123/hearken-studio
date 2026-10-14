@@ -48,7 +48,7 @@ use crate::{
         vad::SpeechDetector,
         LevelMeter, FRAME_SAMPLES, SAMPLE_RATE,
     },
-    events,
+    commands, events,
     follow::{self, Follower, LyricsIndex},
     scripture::{
         build_slide,
@@ -58,6 +58,7 @@ use crate::{
         quote, BibleDb, Slide, Versification,
     },
     state::AppState,
+    voice,
 };
 
 const MIN_PARTIAL_MS: u32 = 600;
@@ -202,6 +203,17 @@ struct TranscriptEvent {
     audio_ms: u32,
     /// From the accuracy pass: replaces the quick text of the same utterance.
     refined: bool,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct VoiceCommandEvent {
+    utterance_id: u64,
+    label: &'static str,
+    /// False when there was nowhere to go (already at the first or last verse).
+    moved: bool,
+    /// What's on screen now.
+    now: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -561,6 +573,30 @@ impl AsrWorker {
         if job.is_final && !refining {
             // With the accuracy pass on, the archive gets its (better) text instead.
             state.history.said(&transcript.text);
+        }
+
+        // Spoken commands ("next verse", "go back"): finished sentences only, so a command acts
+        // once, and only while a scripture is on screen.
+        if job.is_final && settings.voice_commands {
+            if let Some(cmd) = voice::parse(&transcript.text) {
+                let live = state.presenter.snapshot();
+                if live.slide.as_ref().is_some_and(|s| !s.is_song()) {
+                    let before = live.slide.as_ref().map(|s| s.id.clone());
+                    let result = match cmd {
+                        voice::Command::Next => commands::step_live(&app, &state, 1).map(|_| ()),
+                        voice::Command::Previous => commands::step_live(&app, &state, -1).map(|_| ()),
+                        voice::Command::First => commands::live_chapter_edge(&app, &state, true).map(|_| ()),
+                        voice::Command::Final => commands::live_chapter_edge(&app, &state, false).map(|_| ()),
+                    };
+                    if let Err(e) = result {
+                        log::warn!("voice command {cmd:?} failed: {e}");
+                    }
+                    let after = state.presenter.snapshot().slide.map(|s| s.label);
+                    let moved = after.is_some() && state.presenter.snapshot().slide.map(|s| s.id) != before;
+                    let _ = self.app.emit(events::VOICE_COMMAND, VoiceCommandEvent { utterance_id: job.utterance, label: cmd.label(), moved, now: after });
+                    return; // the sentence was an instruction, not something to detect or follow
+                }
+            }
         }
 
         // Follow-along: keep the live passage or song in step with the reader or singers.

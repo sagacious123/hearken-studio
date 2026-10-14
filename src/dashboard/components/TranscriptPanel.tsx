@@ -7,6 +7,7 @@ export function TranscriptPanel() {
   const finals = useDashboard((s) => s.finals);
   const partial = useDashboard((s) => s.partial);
   const queue = useDashboard((s) => s.queue);
+  const voice = useDashboard((s) => s.voiceCommands);
   const endRef = useRef<HTMLDivElement>(null);
 
   // What each sentence led to, shown beside it ("→ John 3:16").
@@ -40,6 +41,15 @@ export function TranscriptPanel() {
           <p>
             <span className={l.confidence < 0.6 ? "text-zinc-400" : "text-zinc-200"}>{l.text}</span>
             {l.refined && <span className="ml-1.5 align-middle text-[10px] text-zinc-500" aria-label="checked">✓</span>}
+            {voice[l.utteranceId] && (
+              <span
+                className={`ml-2 inline-block rounded px-1.5 align-middle text-xs font-medium ${voice[l.utteranceId].moved ? "bg-amber-500/15 text-amber-200" : "bg-zinc-800 text-zinc-400"}`}
+                title={voice[l.utteranceId].moved ? `Voice command: now showing ${voice[l.utteranceId].now}` : "Voice command: already at the end of the chapter"}
+              >
+                ↪ {voice[l.utteranceId].label}
+                {voice[l.utteranceId].moved && voice[l.utteranceId].now ? ` · ${voice[l.utteranceId].now}` : ""}
+              </span>
+            )}
             {found.get(l.utteranceId)?.map((label) => (
               <span key={label} className="ml-2 inline-block rounded bg-amber-500/15 px-1.5 align-middle text-xs font-medium text-amber-200">
                 → {label}

@@ -283,6 +283,12 @@ function SettingsMenu({
             <h3 className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">During the service</h3>
             <Toggle checked={settings.followReading} onChange={(v) => saveSettings({ followReading: v })} label="Follow reading" title="Highlight the live passage as it's read and move to the next verse automatically" />
             <Toggle checked={settings.lyricsDetection} onChange={(v) => saveSettings({ lyricsDetection: v })} label="Follow worship songs" title="Recognise songs from your library as they're sung and follow them section by section" />
+            <Toggle
+              checked={settings.voiceCommands}
+              onChange={(v) => saveSettings({ voiceCommands: v })}
+              label="Voice commands (“next verse”, “go back”)"
+              title="Move the live scripture when the preacher says “next verse”, “previous verse”, “go back” or “go to the first verse”"
+            />
             <label className="flex items-center gap-2 text-zinc-300">
               <input type="checkbox" checked={settings.autoProject} onChange={(e) => saveSettings({ autoProject: e.target.checked })} className="accent-amber-500" />
               Show sure detections automatically, at

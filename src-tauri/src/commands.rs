@@ -622,6 +622,17 @@ pub fn step_live(app: &AppHandle, state: &AppState, delta: i32) -> CmdResult<()>
     Ok(())
 }
 
+/// Put the live chapter's first (or final) verse on screen. False when there's no scripture live.
+pub fn live_chapter_edge(app: &AppHandle, state: &AppState, first: bool) -> CmdResult<bool> {
+    let Some(slide) = state.presenter.snapshot().slide.filter(|s| !s.is_song()) else { return Ok(false) };
+    let r = &slide.reference;
+    let verse = if first { 1 } else { state.versification.max_verse(r.book_id, r.chapter).unwrap_or(1) };
+    let target = ScriptureRef { verse_start: Some(verse), verse_end: None, ..r.clone() };
+    let keep = slide.secondary.as_ref().map(|s| s.translation.as_str());
+    let built = scripture::build_slide(&state.bible.lock(), &slide.translation, keep, &target).map_err(err)?;
+    Ok(built.is_some_and(|s| state.presenter.present(app, s)))
+}
+
 #[tauri::command]
 pub fn list_monitors(app: AppHandle) -> CmdResult<Vec<MonitorInfo>> {
     presentation::list_monitors(&app).map_err(err)

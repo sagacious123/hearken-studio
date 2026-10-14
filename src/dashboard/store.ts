@@ -10,6 +10,7 @@ import {
   type Settings,
   type Slide,
   type TranscriptEvent,
+  type VoiceCommand,
   type Translation,
 } from "../lib/ipc";
 import type { Theme } from "../lib/theme";
@@ -39,6 +40,8 @@ interface DashboardState {
   finals: TranscriptLine[];
   partial: TranscriptEvent | null;
   queue: Detection[];
+  /** Spoken commands, by the sentence that gave them. */
+  voiceCommands: Record<number, VoiceCommand>;
   lastLatencyMs: number | null;
 
   preview: Slide | null;
@@ -80,6 +83,7 @@ export const useDashboard = create<DashboardState>((set, get) => ({
   finals: [],
   partial: null,
   queue: [],
+  voiceCommands: {},
   lastLatencyMs: null,
   preview: null,
   followLatest: true,
@@ -137,6 +141,7 @@ export const useDashboard = create<DashboardState>((set, get) => ({
           return { queue: next, preview, lastLatencyMs: d.latencyMs };
         });
       }),
+      events.voiceCommand((c) => set((s) => ({ voiceCommands: { ...s.voiceCommands, [c.utteranceId]: c } }))),
       events.status((status) => set({ status })),
       events.pipelineError((error) => set({ error, running: false })),
       events.pipelineWarning((warning) => set({ error: warning || null })),

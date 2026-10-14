@@ -102,6 +102,16 @@ export interface ScreenConfig {
   monitor: number | null;
 }
 
+/** A spoken command that moved (or tried to move) the live scripture. */
+export interface VoiceCommand {
+  utteranceId: number;
+  label: string;
+  /** False when there was nowhere to go (already at the first or last verse). */
+  moved: boolean;
+  /** What's on screen now. */
+  now: string | null;
+}
+
 export type RecapFormat = "pdf" | "docx" | "doc" | "html";
 
 export interface Settings {
@@ -115,6 +125,8 @@ export interface Settings {
   quoteDetection: boolean;
   /** Suggest verses said in other words (needs the search-by-meaning model). */
   meaningDetection: boolean;
+  /** Spoken commands for the live scripture: "next verse", "go back", "go to the first verse". */
+  voiceCommands: boolean;
   /** Extra screens beside the main output (up to three). */
   screens: ScreenConfig[];
   secondaryTranslation: string | null;
@@ -366,6 +378,7 @@ const on =
 export const events = {
   transcript: on<TranscriptEvent>("pipeline://transcript"),
   detection: on<Detection>("pipeline://detection"),
+  voiceCommand: on<VoiceCommand>("pipeline://voice-command"),
   status: on<PipelineStatus>("pipeline://status"),
   pipelineError: on<string>("pipeline://error"),
   /** Listening continues; "" clears the warning. */

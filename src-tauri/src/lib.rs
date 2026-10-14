@@ -5,6 +5,7 @@ mod commands;
 mod follow;
 mod history;
 mod recap;
+mod voice;
 mod pipeline;
 mod presentation;
 mod scripture;
@@ -26,6 +27,7 @@ pub mod events {
     pub const HARDWARE_PROGRESS: &str = "hardware://progress";
     pub const MODEL_PROGRESS: &str = "models://progress";
     pub const LIBRARY_PROGRESS: &str = "library://progress";
+    pub const VOICE_COMMAND: &str = "pipeline://voice-command";
     pub const MEANING_PROGRESS: &str = "meaning://progress";
 }
 

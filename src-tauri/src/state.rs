@@ -60,6 +60,8 @@ pub struct Settings {
     pub quote_detection: bool,
     /// Suggest verses said in other words (needs the search-by-meaning model).
     pub meaning_detection: bool,
+    /// Spoken commands for the live scripture: "next verse", "go back", "go to the first verse".
+    pub voice_commands: bool,
     /// Second translation shown side by side ("WEB" under "KJV", or "FRJ" for a French service).
     pub secondary_translation: Option<String>,
     /// Highlight the live passage as it is read and move to the next verse automatically.
@@ -97,6 +99,7 @@ impl Default for Settings {
             reduced_encoder_ctx: true,
             quote_detection: true,
             meaning_detection: true,
+            voice_commands: true,
             secondary_translation: None,
             follow_reading: true,
             lyrics_detection: true,
