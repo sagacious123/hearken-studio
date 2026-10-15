@@ -133,7 +133,7 @@ function SlideContent({ slide, theme, reading }: { slide: Slide; theme: Theme; r
     <div className="sb-content" style={{ padding: pad, gap: reference.sizePx * 0.8 }}>
       {reference.position === "top" && refLabel}
       {slide.secondary ? (
-        <div className="sb-columns">
+        <div className={`sb-columns${layout.sideBySide === "rows" ? " sb-rows" : ""}`}>
           {column(slide.verses, reading)}
           {column(slide.secondary.verses, null)}
         </div>

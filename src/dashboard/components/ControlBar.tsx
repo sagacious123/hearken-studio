@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { api, type DeviceInfo, type MonitorInfo } from "../../lib/ipc";
+import { parseTheme } from "../../lib/theme";
 import { useDashboard } from "../store";
 import { useDismiss } from "../useDismiss";
 import { AccuracyButton } from "./AccuracyButton";
@@ -118,6 +119,7 @@ export function ControlBar() {
               </option>
             ))}
         </Dropdown>
+        {settings.secondaryTranslation && <StackToggle />}
       </div>
 
       <div className="ml-auto flex flex-none items-center gap-0.5">
@@ -201,6 +203,43 @@ function Dropdown({
         {children}
       </select>
     </span>
+  );
+}
+
+/** Two translations next to each other or one above the other (part of the screen's style). */
+function StackToggle() {
+  const liveTheme = useDashboard((st) => st.live?.theme);
+  const draft = useDashboard((st) => st.draftTheme);
+  const setDraft = useDashboard((st) => st.setDraftTheme);
+  const rows = parseTheme(liveTheme).layout.sideBySide === "rows";
+  const toggle = () => {
+    const next = parseTheme(liveTheme);
+    next.layout.sideBySide = rows ? "columns" : "rows";
+    void api.setTheme(next).catch(console.error);
+    // An unapplied style edit keeps up, so Preview and the screen agree.
+    if (draft) setDraft({ ...draft, layout: { ...draft.layout, sideBySide: next.layout.sideBySide } });
+  };
+  return (
+    <button
+      onClick={toggle}
+      className="ml-1 flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 hover:bg-white/[.06] hover:text-zinc-100"
+      title={rows ? "Stacked: one above the other. Click to put them side by side." : "Side by side. Click to stack them one above the other."}
+      aria-label={rows ? "Put translations side by side" : "Stack translations"}
+    >
+      <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
+        {rows ? (
+          <>
+            <rect x="2" y="2.5" width="12" height="4.5" rx="1" />
+            <rect x="2" y="9" width="12" height="4.5" rx="1" />
+          </>
+        ) : (
+          <>
+            <rect x="2" y="2.5" width="5" height="11" rx="1" />
+            <rect x="9" y="2.5" width="5" height="11" rx="1" />
+          </>
+        )}
+      </svg>
+    </button>
   );
 }
 

@@ -66,6 +66,18 @@
   border-left: 2px solid rgba(255, 255, 255, 0.18);
   padding-left: 64px;
 }
+/* One above the other: each translation gets half the height and the full width. */
+.sb-columns.sb-rows {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 40px;
+}
+.sb-columns.sb-rows .sb-text + .sb-text {
+  border-left: 0;
+  padding-left: 0;
+  border-top: 2px solid rgba(255, 255, 255, 0.18);
+  padding-top: 40px;
+}
 .sb-line {
   display: block;
 }

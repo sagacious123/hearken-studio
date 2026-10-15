@@ -59,6 +59,16 @@ export function StyleDrawer() {
         <ReferenceSection theme={theme} edit={edit} />
         <Section title="Layout">
           <Slider label="Margins" value={theme.layout.paddingPct} min={0} max={15} step={0.5} format={(v) => `${v}%`} onChange={(v) => edit((t) => void (t.layout.paddingPct = v))} />
+          <Row label="Two translations">
+            <Segmented
+              value={theme.layout.sideBySide}
+              options={[
+                ["columns", "Side by side"],
+                ["rows", "Stacked"],
+              ]}
+              onChange={(v) => edit((t) => void (t.layout.sideBySide = v as Theme["layout"]["sideBySide"]))}
+            />
+          </Row>
           <Row label="Transition">
             <Segmented
               value={theme.transition.type}

@@ -130,7 +130,12 @@ function Btn({ onClick, children, title, danger }: { onClick: () => void; childr
 function SearchBox() {
   const translation = useDashboard((s) => s.settings?.translation ?? "KJV");
   const setPreview = useDashboard((s) => s.setPreview);
+  const goLive = useDashboard((s) => s.goLive);
+  const previewId = useDashboard((s) => s.preview?.id);
   const [query, setQuery] = useState("");
+  /** The passage the last Enter put in Preview: Enter again (with nothing new typed) takes it live. */
+  const [armed, setArmed] = useState<string | null>(null);
+  const ready = armed !== null && armed === previewId;
   const [result, setResult] = useState<SearchResponse | null>(null);
 
   useEffect(() => {
@@ -150,19 +155,39 @@ function SearchBox() {
     setPreview(s);
     setQuery("");
   };
+  const enter = () => {
+    const first = items[0] ?? byMeaning[0];
+    if (query.trim() && first) {
+      pick(first);
+      setArmed(first.id);
+    } else if (!query.trim() && ready) {
+      void goLive();
+      setArmed(null);
+    }
+  };
 
   return (
     <div className="relative">
       <input
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => {
-          const first = items[0] ?? byMeaning[0];
-          if (e.key === "Enter" && first) pick(first);
-          if (e.key === "Escape") setQuery("");
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setArmed(null);
         }}
-        placeholder="Search: “jn 3 16”, “love is patient” or “don't worry about tomorrow”"
-        className="h-10 w-full rounded-lg bg-white/[.02] px-3.5 text-sm font-light outline-none ring-1 ring-zinc-800 placeholder:text-zinc-500 focus:ring-amber-500"
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            enter();
+          }
+          if (e.key === "Escape") {
+            setQuery("");
+            setArmed(null);
+          }
+        }}
+        onBlur={() => setArmed(null)}
+        aria-label="Search scripture"
+        placeholder={ready ? "Press Enter again to go live" : "Search: “jn 3 16”, “love is patient” or “don't worry about tomorrow”"}
+        className={`h-10 w-full rounded-lg bg-white/[.02] px-3.5 text-sm font-light outline-none ring-1 ring-zinc-800 focus:ring-amber-500 ${ready ? "placeholder:text-amber-300" : "placeholder:text-zinc-500"}`}
       />
       {result && (
         <ul className="absolute inset-x-3 top-full z-10 mt-1 max-h-80 overflow-y-auto rounded-md bg-zinc-900 shadow-xl ring-1 ring-zinc-700">

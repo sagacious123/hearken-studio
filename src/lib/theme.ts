@@ -46,6 +46,8 @@ export interface Theme {
     /** Safe-area padding as % of stage width (projectors overscan). */
     paddingPct: number;
     verticalAlign: "top" | "center" | "bottom";
+    /** Two translations: next to each other ("columns") or one above the other ("rows"). */
+    sideBySide: "columns" | "rows";
   };
   transition: {
     type: "fade" | "none";
@@ -79,7 +81,7 @@ export const DEFAULT_THEME: Theme = {
     uppercase: true,
     showTranslation: true,
   },
-  layout: { paddingPct: 6, verticalAlign: "center" },
+  layout: { paddingPct: 6, verticalAlign: "center", sideBySide: "columns" },
   transition: { type: "fade", durationMs: 350 },
 };
 
@@ -87,6 +89,7 @@ const ENUMS: Record<string, readonly string[]> = {
   "text.align": ["left", "center", "right"],
   "reference.position": ["top", "bottom"],
   "layout.verticalAlign": ["top", "center", "bottom"],
+  "layout.sideBySide": ["columns", "rows"],
   "transition.type": ["fade", "none"],
 };
 

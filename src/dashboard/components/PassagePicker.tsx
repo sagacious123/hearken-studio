@@ -33,6 +33,9 @@ function useSelectOnFocus() {
   };
 }
 
+/** Waiting for a second Enter on exactly the passage the first one previewed. */
+const armedFor = (armed: string | null, key: string) => armed !== null && armed === key;
+
 /** Focus (and select) a field after React has rendered, e.g. once it's no longer disabled. */
 const focusSoon = (el: HTMLInputElement | null) => requestAnimationFrame(() => el?.focus());
 
@@ -117,12 +120,21 @@ export function PassagePicker() {
     else setPreview(slide);
   };
 
+  // Enter previews; Enter again on the same passage (nothing changed) takes it live.
+  const passageKey = `${book?.id}:${chapter}:${from}:${to}:${translation}`;
+  const [armed, setArmed] = useState<string | null>(null);
+  const again = armedFor(armed, passageKey);
   const onEnter = (e: KeyboardEvent<HTMLInputElement>, next?: () => void) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
-    if (e.metaKey || e.ctrlKey) void submit(true);
-    else if (next) next();
-    else void submit(false);
+    if (e.metaKey || e.ctrlKey || again) {
+      void submit(true);
+      setArmed(null);
+    } else if (next) next();
+    else if (!problem && book && chapter) {
+      void submit(false);
+      setArmed(passageKey);
+    }
   };
 
   const num = "h-10 w-12 rounded-lg bg-white/[.02] px-2 text-sm tabular-nums outline-none ring-1 ring-zinc-800 focus:ring-amber-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none";
@@ -183,9 +195,9 @@ export function PassagePicker() {
           className={num}
         />
       </div>
-      {(problem || rangeLong) && (
-        <p className={`text-xs ${problem ? "text-red-400" : "text-zinc-500"}`}>
-          {problem ?? `Shows ${MAX_SLIDE_VERSES} verses at a time; use Verse ▶ for the rest.`}
+      {(problem || rangeLong || again) && (
+        <p className={`text-xs ${problem ? "text-red-400" : again ? "text-amber-300" : "text-zinc-500"}`}>
+          {problem ?? (again ? "Press Enter again to go live" : `Shows ${MAX_SLIDE_VERSES} verses at a time; use Verse ▶ for the rest.`)}
         </p>
       )}
     </div>
