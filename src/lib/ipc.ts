@@ -59,6 +59,18 @@ export type LicenceStatus =
   | { state: "licenceExpired"; church: string; expired: number }
   | { state: "clockBehind"; now: number; seen: number };
 
+export type AccountState =
+  | { state: "signedIn"; email: string; church: string; until: number }
+  | { state: "signedOut" }
+  | { state: "expired"; email: string };
+
+/** Sign-in, trial and licence together: listening needs a signed-in account and a trial or licence. */
+export interface LicenceInfo {
+  status: LicenceStatus;
+  account: AccountState;
+  canListen: boolean;
+}
+
 export interface TranscriptEvent {
   utteranceId: number;
   text: string;
@@ -326,10 +338,14 @@ export const api = {
   listAudioDevices: () => invoke<DeviceInfo[]>("list_audio_devices"),
   startPipeline: () => invoke<PipelineInfo>("start_pipeline"),
   stopPipeline: () => invoke<void>("stop_pipeline"),
-  licenceStatus: () => invoke<LicenceStatus>("licence_status"),
-  activateLicence: (key: string) => invoke<LicenceStatus>("activate_licence", { key }),
-  /** Registers the trial and checks the clock against the website's (needs the internet). */
-  checkLicenceOnline: () => invoke<LicenceStatus>("check_licence_online"),
+  licenceStatus: () => invoke<LicenceInfo>("licence_status"),
+  activateLicence: (key: string) => invoke<LicenceInfo>("activate_licence", { key }),
+  /** Registers the trial, renews the sign-in and checks the clock against the website's. */
+  checkLicenceOnline: () => invoke<LicenceInfo>("check_licence_online"),
+  signIn: (email: string, password: string) => invoke<LicenceInfo>("sign_in", { email, password }),
+  signUp: (church: string, email: string, password: string) => invoke<LicenceInfo>("sign_up", { church, email, password }),
+  signOut: () => invoke<LicenceInfo>("sign_out"),
+  forgotPassword: (email: string) => invoke<void>("forgot_password", { email }),
   /** The running session, if listening. */
   pipelineInfo: () => invoke<PipelineInfo | null>("pipeline_info"),
   listTranslations: () => invoke<Translation[]>("list_translations"),
@@ -395,7 +411,7 @@ export const events = {
   transcript: on<TranscriptEvent>("pipeline://transcript"),
   detection: on<Detection>("pipeline://detection"),
   voiceCommand: on<VoiceCommand>("pipeline://voice-command"),
-  licence: on<LicenceStatus>("licence://status"),
+  licence: on<LicenceInfo>("licence://status"),
   /** The room started (true) or stopped (false) singing. */
   singing: on<boolean>("pipeline://singing"),
   status: on<PipelineStatus>("pipeline://status"),

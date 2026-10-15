@@ -22,6 +22,9 @@ pub enum Pass {
     /// A paid licence, pasted in by the church.
     #[serde(rename_all = "camelCase")]
     Licence { id: String, church: String, plan: String, issued: i64, expires: i64 },
+    /// Signed in on this computer, until `expires` (renewed whenever the app is online).
+    #[serde(rename_all = "camelCase")]
+    Account { user: String, email: String, church: String, machine: String, issued: i64, expires: i64 },
     /// The website's clock, to settle a computer whose date looks wrong.
     #[serde(rename_all = "camelCase")]
     Time { issued: i64, nonce: String },

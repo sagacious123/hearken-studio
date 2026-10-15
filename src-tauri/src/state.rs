@@ -270,19 +270,24 @@ impl AppState {
         })
     }
 
-    /// Registers the trial, or settles a clock that looks wrong, if the internet is there.
-    /// Quietly does nothing otherwise: the trial runs offline and this is tried next start.
+    /// Registers the trial, renews the sign-in, or settles a clock that looks wrong, if the
+    /// internet is there. Quietly does nothing otherwise: it's tried again next start.
     pub fn check_licence(app: &AppHandle) {
         let app = app.clone();
         std::thread::spawn(move || {
             use crate::licence::Status;
             let state = app.state::<AppState>();
-            if matches!(state.licence.status(), Status::Trial { registered: false, .. } | Status::ClockBehind { .. }) {
+            let unsettled = matches!(state.licence.status(), Status::Trial { registered: false, .. } | Status::ClockBehind { .. });
+            if unsettled || state.licence.needs_renewal() {
                 match state.licence.check_online() {
-                    Ok(status) => {
-                        let _ = app.emit(crate::events::LICENCE, status);
+                    Ok(info) => {
+                        let _ = app.emit(crate::events::LICENCE, info);
                     }
-                    Err(e) => log::info!("licence check skipped: {e}"),
+                    Err(e) => {
+                        log::info!("licence check skipped: {e}");
+                        // A sign-in the website ended still shows as signed out.
+                        let _ = app.emit(crate::events::LICENCE, state.licence.info());
+                    }
                 }
             }
         });

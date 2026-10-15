@@ -442,9 +442,9 @@ function SettingsMenu({
                 setOpen(false);
                 useDashboard.getState().setLicenceOpen(true);
               }}
-              hint="Free trial, licence key"
+              hint="Account, free trial, licence key"
             >
-              Licence
+              Account and licence
             </MenuItem>
           </div>
           <div className="space-y-2.5 border-t border-zinc-800 pt-3">

@@ -1,11 +1,14 @@
-//! The free trial and paid licences, checked on this computer with no internet needed.
+//! Signing in, the free trial and paid licences. Everything is checked on this computer, so
+//! services need no internet; the website is only needed to sign in, and once every 30 days.
 //!
+//! - **Account:** listening needs a signed-in account. Signing in gives a pass signed by the
+//!   website for this computer, valid for 30 days and renewed whenever the app is online.
 //! - **Trial:** 60 days from the first run. The start date is kept in several places,
 //!   including the system's secure storage, so reinstalling doesn't restart it, and the
 //!   earliest copy wins. Once online, the website registers this computer's anonymous ID and
 //!   signs the trial dates, so a new install on the same computer gets the same dates.
-//! - **Licence:** a key signed by the website, pasted in by the church. It carries its end
-//!   date; there are 14 days' grace after it.
+//! - **Licence:** a key signed by the website, attached to the account (fetched on sign-in) or
+//!   pasted in. It carries its end date; there are 14 days' grace after it.
 //! - **Clock:** the latest time ever seen is remembered. A clock more than two days behind it
 //!   (or behind the service history) was turned back, and listening waits for one check
 //!   against the website's clock.
@@ -24,6 +27,7 @@ use std::{
 
 use parking_lot::Mutex;
 use serde::Serialize;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use store::{FileStore, Record, Store, SystemStore};
@@ -34,6 +38,8 @@ pub const GRACE_DAYS: i64 = 14;
 const DAY: i64 = 86_400;
 /// Clocks drift and time zones change: only a clock this far behind counts as turned back.
 const CLOCK_SLACK: i64 = 2 * DAY;
+/// Renew the sign-in pass when online if it's older than this.
+const RENEW_AFTER: i64 = DAY;
 const SERVER: &str = "https://hearken-site.vercel.app/api";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -66,6 +72,42 @@ impl Status {
             Status::ClockBehind { .. } => Some("This computer's date looks wrong. Set the correct date and time, or connect to the internet and click Check now."),
             _ => None,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum Account {
+    /// `until`: when the app must next reach the website (Unix seconds).
+    #[serde(rename_all = "camelCase")]
+    SignedIn { email: String, church: String, until: i64 },
+    SignedOut,
+    /// Offline for more than 30 days: renews by itself once online.
+    #[serde(rename_all = "camelCase")]
+    Expired { email: String },
+}
+
+/// Everything the dashboard shows about the account, trial and licence.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Info {
+    pub status: Status,
+    pub account: Account,
+    pub can_listen: bool,
+}
+
+impl Info {
+    /// Why listening can't start: "SIGNIN" or "LICENCE", and what to tell the operator.
+    pub fn blocked(&self) -> Option<(&'static str, &'static str)> {
+        if let Status::ClockBehind { .. } = self.status {
+            return self.status.reason().map(|r| ("LICENCE", r));
+        }
+        match self.account {
+            Account::SignedOut => return Some(("SIGNIN", "Sign in to start listening.")),
+            Account::Expired { .. } => return Some(("SIGNIN", "Connect to the internet so Hearken can renew your sign-in, or sign in again.")),
+            Account::SignedIn { .. } => {}
+        }
+        self.status.reason().map(|r| ("LICENCE", r))
     }
 }
 
@@ -105,10 +147,25 @@ pub fn evaluate(record: &Record, now: i64, newest_activity: i64, machine: Option
     }
 }
 
+/// Signed in on this computer, from the website's signed pass.
+pub fn account(record: &Record, now: i64, machine: &str, verify: &dyn Fn(&str) -> Option<Pass>) -> Account {
+    match record.account_pass.as_deref().and_then(verify) {
+        Some(Pass::Account { email, church, machine: m, expires, .. }) if m == machine => {
+            if now <= expires {
+                Account::SignedIn { email, church, until: expires }
+            } else {
+                Account::Expired { email }
+            }
+        }
+        _ => Account::SignedOut,
+    }
+}
+
 pub struct Licensing {
     record: Mutex<Record>,
     stores: Vec<Box<dyn Store>>,
-    machine: Option<String>,
+    /// The computer's anonymous ID (or this install's, where the system won't give one).
+    machine: String,
     history: PathBuf,
 }
 
@@ -133,14 +190,22 @@ impl Licensing {
     fn with_stores(stores: Vec<Box<dyn Store>>, machine: Option<String>, history: PathBuf) -> Self {
         let now = unix_now();
         let found = Record::merge(stores.iter().filter_map(|s| s.read()).filter_map(|t| store::unseal(&t)));
-        let record = found.unwrap_or(Record { first_seen: now, latest_seen: now, ..Default::default() });
+        let mut record = found.unwrap_or(Record { first_seen: now, latest_seen: now, ..Default::default() });
+        let machine = machine.unwrap_or_else(|| record.install_id.get_or_insert_with(|| random_hex(32)).clone());
         let this = Self { record: Mutex::new(record), stores, machine, history };
         this.touch();
         this
     }
 
     pub fn status(&self) -> Status {
-        evaluate(&self.record.lock(), unix_now(), newest_activity(&self.history), self.machine.as_deref(), &token::verify)
+        evaluate(&self.record.lock(), unix_now(), newest_activity(&self.history), Some(&self.machine), &token::verify)
+    }
+
+    pub fn info(&self) -> Info {
+        let status = self.status();
+        let account = account(&self.record.lock(), unix_now(), &self.machine, &token::verify);
+        let can_listen = status.can_listen() && matches!(account, Account::SignedIn { .. });
+        Info { status, account, can_listen }
     }
 
     /// Remembers the latest time seen, and saves every copy.
@@ -158,7 +223,7 @@ impl Licensing {
     }
 
     /// Saves a licence key if it's genuine.
-    pub fn activate(&self, key: &str) -> Result<Status, String> {
+    pub fn activate(&self, key: &str) -> Result<Info, String> {
         match token::verify(key) {
             Some(Pass::Licence { .. }) => {
                 let key: String = key.chars().filter(|c| !c.is_whitespace()).collect();
@@ -166,40 +231,121 @@ impl Licensing {
                 r.licence = Some(key);
                 self.save(&r);
                 drop(r);
-                Ok(self.status())
+                Ok(self.info())
             }
             _ => Err("That isn't a valid licence key. Copy the whole key from your email and paste it again.".into()),
         }
     }
 
-    /// Registers the trial with the website if it isn't yet, and checks this computer's clock
-    /// against the website's. Needs the internet; nothing else does.
-    pub fn check_online(&self) -> Result<Status, String> {
-        let nonce = nonce(self.machine.as_deref());
-        let licensed = matches!(self.status(), Status::Licensed { .. });
-        let unregistered = !licensed && !matches!(self.status(), Status::Trial { registered: true, .. } | Status::TrialOver { .. });
-        let issued = match (&self.machine, unregistered) {
-            (Some(machine), true) => {
-                let first_seen = self.record.lock().first_seen;
-                let body = serde_json::json!({ "machine": machine, "firstSeen": first_seen, "nonce": nonce, "version": env!("CARGO_PKG_VERSION") });
-                let pass = fetch_pass(agent().post(&format!("{SERVER}/trial")).set("Content-Type", "application/json").send_string(&body.to_string()))?;
-                match token::verify(&pass) {
-                    Some(Pass::Trial { machine: m, nonce: n, issued, .. }) if &m == machine && n == nonce => {
-                        self.record.lock().trial_pass = Some(pass);
-                        issued
-                    }
-                    _ => return Err("The website's answer couldn't be verified.".into()),
-                }
+    pub fn sign_in(&self, email: &str, password: &str) -> Result<Info, String> {
+        let reply = post("auth/login", json!({ "email": email, "password": password, "machine": self.machine })).map_err(|f| f.message)?;
+        self.accept(reply)
+    }
+
+    pub fn sign_up(&self, church: &str, email: &str, password: &str) -> Result<Info, String> {
+        let reply = post("auth/signup", json!({ "church": church, "email": email, "password": password, "machine": self.machine })).map_err(|f| f.message)?;
+        self.accept(reply)
+    }
+
+    /// Asks for a password-reset email.
+    pub fn forgot(&self, email: &str) -> Result<(), String> {
+        post("auth/forgot", json!({ "email": email })).map(|_| ()).map_err(|f| f.message)
+    }
+
+    /// Signs out of this computer (and ends the session on the website when online).
+    pub fn sign_out(&self) -> Info {
+        let session = self.record.lock().session.take();
+        if let Some(session) = session {
+            let _ = post("auth/logout", json!({ "session": session }));
+        }
+        let mut r = self.record.lock();
+        r.account_pass = None;
+        self.save(&r);
+        drop(r);
+        self.info()
+    }
+
+    /// Signed in, with a pass more than a day old (or past its 30 days).
+    pub fn needs_renewal(&self) -> bool {
+        let r = self.record.lock();
+        let issued = r.account_pass.as_deref().and_then(token::verify).and_then(|p| match p {
+            Pass::Account { issued, .. } => Some(issued),
+            _ => None,
+        });
+        r.session.is_some() && issued.map_or(true, |i| unix_now() - i > RENEW_AFTER)
+    }
+
+    /// Renews the sign-in pass and fetches the account's licence. A session the website has
+    /// ended (password reset, signed out elsewhere) signs this computer out.
+    pub fn renew(&self) -> Result<Info, String> {
+        let Some(session) = self.record.lock().session.clone() else { return Ok(self.info()) };
+        match post("auth/refresh", json!({ "session": session, "machine": self.machine })) {
+            Ok(reply) => self.accept(reply),
+            Err(Failure { status: Some(401), message }) => {
+                let mut r = self.record.lock();
+                r.session = None;
+                r.account_pass = None;
+                self.save(&r);
+                Err(message)
             }
-            _ => {
-                let pass = fetch_pass(agent().get(&format!("{SERVER}/time")).query("nonce", &nonce).call())?;
-                match token::verify(&pass) {
-                    Some(Pass::Time { issued, nonce: n }) if n == nonce => issued,
-                    _ => return Err("The website's answer couldn't be verified.".into()),
+            Err(f) => Err(f.message),
+        }
+    }
+
+    /// Stores what the website sent on sign-in or renewal.
+    fn accept(&self, reply: Value) -> Result<Info, String> {
+        let pass = reply["pass"].as_str().unwrap_or_default().to_owned();
+        let issued = match token::verify(&pass) {
+            Some(Pass::Account { machine, issued, .. }) if machine == self.machine => issued,
+            _ => return Err("The website's answer couldn't be verified.".into()),
+        };
+        let mut r = self.record.lock();
+        if let Some(session) = reply["session"].as_str() {
+            r.session = Some(session.to_owned());
+        }
+        r.account_pass = Some(pass);
+        if let Some(licence) = reply["licence"].as_str().filter(|k| matches!(token::verify(k), Some(Pass::Licence { .. }))) {
+            r.licence = Some(licence.to_owned());
+        }
+        drop(r);
+        self.trust_clock(issued)?;
+        Ok(self.info())
+    }
+
+    /// Registers the trial with the website if it isn't yet, renews the sign-in, and checks this
+    /// computer's clock against the website's.
+    pub fn check_online(&self) -> Result<Info, String> {
+        let nonce = random_hex(16);
+        let status = self.status();
+        let unregistered = !matches!(status, Status::Licensed { .. } | Status::Trial { registered: true, .. } | Status::TrialOver { .. });
+        let issued = if unregistered {
+            let first_seen = self.record.lock().first_seen;
+            let body = json!({ "machine": self.machine, "firstSeen": first_seen, "nonce": nonce, "version": env!("CARGO_PKG_VERSION") });
+            let pass = post("trial", body).map_err(|f| f.message)?["pass"].as_str().unwrap_or_default().to_owned();
+            match token::verify(&pass) {
+                Some(Pass::Trial { machine: m, nonce: n, issued, .. }) if m == self.machine && n == nonce => {
+                    self.record.lock().trial_pass = Some(pass);
+                    issued
                 }
+                _ => return Err("The website's answer couldn't be verified.".into()),
+            }
+        } else {
+            let reply = call(agent().get(&format!("{}/time", server())).query("nonce", &nonce).call()).map_err(|f| f.message)?;
+            match token::verify(reply["pass"].as_str().unwrap_or_default()) {
+                Some(Pass::Time { issued, nonce: n }) if n == nonce => issued,
+                _ => return Err("The website's answer couldn't be verified.".into()),
             }
         };
+        self.trust_clock(issued)?;
+        if self.record.lock().session.is_some() {
+            self.renew()?;
+        }
+        Ok(self.info())
+    }
 
+    /// The website vouched for the time `issued`: a clock that agrees clears any doubt about
+    /// the date, and one far behind is reported.
+    fn trust_clock(&self, issued: i64) -> Result<(), String> {
         let local = unix_now();
         let mut r = self.record.lock();
         if local + CLOCK_SLACK < issued {
@@ -210,33 +356,49 @@ impl Licensing {
                 day(issued)
             ));
         }
-        // The website vouches for the time: anything seen before now was a wrong clock, not tampering.
         r.latest_seen = local.max(issued);
         r.activity_checked = newest_activity(&self.history).max(r.activity_checked);
         self.save(&r);
-        drop(r);
-        Ok(self.status())
+        Ok(())
     }
 }
 
-fn fetch_pass(response: Result<ureq::Response, ureq::Error>) -> Result<String, String> {
-    let response = response.map_err(|e| match e {
-        ureq::Error::Status(code, _) => format!("The licence service answered {code}. Try again later."),
-        ureq::Error::Transport(_) => "Couldn't reach the internet. Connect and try again.".into(),
-    })?;
-    let text = response.into_string().map_err(|_| "The website's answer couldn't be read.".to_string())?;
-    let body: serde_json::Value = serde_json::from_str(&text).map_err(|_| "The website's answer couldn't be read.".to_string())?;
-    body["pass"].as_str().map(str::to_owned).ok_or_else(|| "The website's answer couldn't be read.".into())
+/// The website's API: the live site, or another (a local test server) named by HEARKEN_API.
+fn server() -> String {
+    std::env::var("HEARKEN_API").unwrap_or_else(|_| SERVER.into())
+}
+
+struct Failure {
+    status: Option<u16>,
+    message: String,
+}
+
+fn post(path: &str, body: Value) -> Result<Value, Failure> {
+    call(agent().post(&format!("{}/{path}", server())).set("Content-Type", "application/json").send_string(&body.to_string()))
+}
+
+/// The JSON answer, or the website's own explanation of what went wrong.
+fn call(response: Result<ureq::Response, ureq::Error>) -> Result<Value, Failure> {
+    let unreadable = || Failure { status: None, message: "The website's answer couldn't be read.".into() };
+    match response {
+        Ok(r) => serde_json::from_str(&r.into_string().map_err(|_| unreadable())?).map_err(|_| unreadable()),
+        Err(ureq::Error::Status(code, r)) => {
+            let said = r.into_string().ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["error"].as_str().map(str::to_owned));
+            Err(Failure { status: Some(code), message: said.unwrap_or_else(|| format!("The Hearken website answered {code}. Try again later.")) })
+        }
+        Err(ureq::Error::Transport(_)) => Err(Failure { status: None, message: "Couldn't reach the internet. Connect and try again.".into() }),
+    }
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build()
+    ureq::AgentBuilder::new().timeout(Duration::from_secs(15)).build()
 }
 
-/// Changes on each request so an old answer from the website can't be replayed.
-fn nonce(machine: Option<&str>) -> String {
+/// Unpredictable enough for a nonce or an install ID.
+fn random_hex(bytes: usize) -> String {
     let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-    machine::hex(&Sha256::digest(format!("{t}/{}/{}", std::process::id(), machine.unwrap_or("")).as_bytes())[..16])
+    let seed = format!("{t}/{}/{:p}", std::process::id(), &t);
+    machine::hex(&Sha256::digest(seed.as_bytes())[..bytes.min(32)])
 }
 
 fn unix_now() -> i64 {
@@ -332,13 +494,78 @@ mod tests {
         assert!(matches!(status(&forged, T0 + 61 * DAY, 0), Status::TrialOver { .. }));
     }
 
+    fn signed_in(machine: &str, issued: i64) -> Record {
+        let pass = sign(&Pass::Account { user: "u1".into(), email: "media@grace.org".into(), church: "Grace Chapel".into(), machine: machine.into(), issued, expires: issued + 30 * DAY }, &test_key());
+        Record { account_pass: Some(pass), session: Some("s".into()), ..fresh() }
+    }
+
+    fn info(r: &Record, now: i64) -> Info {
+        let status = status(r, now, 0);
+        let account = account(r, now, M, &verify_test);
+        let can_listen = status.can_listen() && matches!(account, Account::SignedIn { .. });
+        Info { status, account, can_listen }
+    }
+
+    #[test]
+    fn listening_needs_a_signed_in_account() {
+        // Signed out: the trial is running, but listening waits for sign-in.
+        let out = info(&fresh(), T0);
+        assert_eq!(out.account, Account::SignedOut);
+        assert_eq!(out.blocked().map(|b| b.0), Some("SIGNIN"));
+        // Signed in: allowed for 30 days offline.
+        let r = signed_in(M, T0);
+        assert!(info(&r, T0 + 29 * DAY).can_listen);
+        assert!(info(&r, T0 + 29 * DAY).blocked().is_none());
+        // Past 30 days offline: renew first.
+        let late = info(&r, T0 + 31 * DAY);
+        assert_eq!(late.account, Account::Expired { email: "media@grace.org".into() });
+        assert_eq!(late.blocked().map(|b| b.0), Some("SIGNIN"));
+        // A pass copied from another computer doesn't sign this one in.
+        assert_eq!(info(&signed_in("machine-b", T0), T0).account, Account::SignedOut);
+        // Signed in but the trial is over: it's the licence that's needed.
+        assert_eq!(info(&signed_in(M, T0 + 61 * DAY), T0 + 61 * DAY).blocked().map(|b| b.0), Some("LICENCE"));
+    }
+
+    /// Against the website's API run locally (`node scripts/local-api.mjs` in the site repo):
+    /// `HEARKEN_API=http://localhost:4400/api cargo test signs_up -- --ignored`
+    #[test]
+    #[ignore = "needs the site's local API and HEARKEN_API"]
+    fn signs_up_signs_in_renews_and_signs_out() {
+        assert!(std::env::var("HEARKEN_API").is_ok(), "set HEARKEN_API");
+        let dir = std::env::temp_dir().join(format!("sb-account-{}", random_hex(4)));
+        let l = Licensing::for_tests(&dir);
+        assert_eq!(l.info().account, Account::SignedOut);
+        assert_eq!(l.info().blocked().map(|b| b.0), Some("SIGNIN"));
+
+        let email = format!("e2e-{}@example.com", random_hex(4));
+        let info = l.sign_up("Test Church", &email, "a good password").unwrap();
+        assert!(info.can_listen, "{info:?}");
+        assert!(matches!(&info.account, Account::SignedIn { church, .. } if church == "Test Church"));
+        assert!(l.sign_up("Test Church", &email, "a good password").unwrap_err().contains("already"));
+
+        assert_eq!(l.sign_out().account, Account::SignedOut);
+        assert!(l.sign_in(&email, "not the password").unwrap_err().contains("Wrong email or password"));
+        assert!(l.sign_in(&email.to_uppercase(), "a good password").unwrap().can_listen);
+        assert!(matches!(l.renew().unwrap().account, Account::SignedIn { .. }));
+
+        // Online, the trial is registered too.
+        assert!(matches!(l.check_online().unwrap().status, Status::Trial { registered: true, .. }));
+
+        // Signed out on the website (here: the session forgotten), this computer is signed out at renewal.
+        let session = l.record.lock().session.clone().unwrap();
+        post("auth/logout", json!({ "session": session })).ok();
+        assert!(l.renew().is_err());
+        assert_eq!(l.info().account, Account::SignedOut);
+    }
+
     /// The real website: its signed clock reads back in the app and settles the date.
     #[test]
     #[ignore = "contacts the Hearken website"]
     fn checks_the_clock_with_the_website() {
         let dir = std::env::temp_dir().join(format!("sb-licence-live-{}", std::process::id()));
         let l = Licensing::for_tests(&dir);
-        assert!(matches!(l.check_online(), Ok(Status::Trial { .. })), "{:?}", l.check_online());
+        let info = l.check_online().map_err(|e| e.to_string());
+        assert!(matches!(info, Ok(Info { status: Status::Trial { .. }, .. })), "{info:?}");
         assert!((l.record.lock().latest_seen - unix_now()).abs() < 60);
     }
 

@@ -130,10 +130,17 @@ pub async fn list_audio_devices() -> CmdResult<Vec<DeviceInfo>> {
 
 #[tauri::command]
 pub async fn start_pipeline(app: AppHandle, state: State<'_, AppState>) -> CmdResult<PipelineInfo> {
-    // The trial or licence is checked only here: a service already listening is never stopped.
-    let licence = state.licence.status();
-    if let Some(reason) = licence.reason() {
-        return Err(format!("LICENCE: {reason}"));
+    // Sign-in, the trial and the licence are checked only here: a service already listening is
+    // never stopped. A sign-in pass past its 30 days is renewed first if the internet is there.
+    let mut licence = state.licence.info();
+    if licence.blocked().is_some_and(|(kind, _)| kind == "SIGNIN") && state.licence.needs_renewal() {
+        let app2 = app.clone();
+        if let Ok(Ok(info)) = tauri::async_runtime::spawn_blocking(move || app2.state::<AppState>().licence.renew()).await {
+            licence = info;
+        }
+    }
+    if let Some((kind, reason)) = licence.blocked() {
+        return Err(format!("{kind}: {reason}"));
     }
     state.licence.touch();
     // Already listening (say the dashboard reloaded and lost track): carry on with it. A
@@ -196,20 +203,43 @@ pub async fn start_pipeline(app: AppHandle, state: State<'_, AppState>) -> CmdRe
 
 // ---------- licence ----------
 
+use crate::licence::Info as LicenceInfo;
+
 #[tauri::command]
-pub fn licence_status(state: State<'_, AppState>) -> crate::licence::Status {
-    state.licence.status()
+pub fn licence_status(state: State<'_, AppState>) -> LicenceInfo {
+    state.licence.info()
 }
 
 #[tauri::command]
-pub fn activate_licence(key: String, state: State<'_, AppState>) -> CmdResult<crate::licence::Status> {
+pub fn activate_licence(key: String, state: State<'_, AppState>) -> CmdResult<LicenceInfo> {
     state.licence.activate(&key)
 }
 
-/// Registers the trial and checks the clock against the website's (needs the internet).
+/// Registers the trial, renews the sign-in and checks the clock against the website's.
 #[tauri::command]
-pub async fn check_licence_online(app: AppHandle) -> CmdResult<crate::licence::Status> {
+pub async fn check_licence_online(app: AppHandle) -> CmdResult<LicenceInfo> {
     tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().licence.check_online()).await.map_err(err)?
+}
+
+#[tauri::command]
+pub async fn sign_in(email: String, password: String, app: AppHandle) -> CmdResult<LicenceInfo> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().licence.sign_in(&email, &password)).await.map_err(err)?
+}
+
+#[tauri::command]
+pub async fn sign_up(church: String, email: String, password: String, app: AppHandle) -> CmdResult<LicenceInfo> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().licence.sign_up(&church, &email, &password)).await.map_err(err)?
+}
+
+#[tauri::command]
+pub async fn sign_out(app: AppHandle) -> CmdResult<LicenceInfo> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().licence.sign_out()).await.map_err(err)
+}
+
+/// Emails a link to choose a new password.
+#[tauri::command]
+pub async fn forgot_password(email: String, app: AppHandle) -> CmdResult<()> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().licence.forgot(&email)).await.map_err(err)?
 }
 
 /// The running session, if listening: the dashboard asks on load so a reload mid-service

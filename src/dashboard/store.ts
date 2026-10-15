@@ -4,7 +4,7 @@ import {
   events,
   type Detection,
   type HardwareProfile,
-  type LicenceStatus,
+  type LicenceInfo,
   type OutputState,
   type PipelineInfo,
   type PipelineStatus,
@@ -60,10 +60,13 @@ interface DashboardState {
   /** The Style drawer (slides in from the left; Preview stays visible). */
   styleOpen: boolean;
   setStyleOpen: (open: boolean) => void;
-  licence: LicenceStatus | null;
+  licence: LicenceInfo | null;
   /** The Licence panel is open. */
   licenceOpen: boolean;
   setLicenceOpen: (open: boolean) => void;
+  /** The sign-in screen is open. */
+  signInOpen: boolean;
+  setSignInOpen: (open: boolean) => void;
 
   settings: Settings | null;
   translations: Translation[];
@@ -137,6 +140,8 @@ export const useDashboard = create<DashboardState>((set, get) => ({
   licence: null,
   licenceOpen: false,
   setLicenceOpen: (licenceOpen) => set({ licenceOpen }),
+  signInOpen: false,
+  setSignInOpen: (signInOpen) => set({ signInOpen }),
   settings: null,
   translations: [],
   profile: null,
@@ -212,8 +217,11 @@ export const useDashboard = create<DashboardState>((set, get) => ({
       const profile = await api.getHardwareProfile();
       set({ running: true, info, profile });
     } catch (e) {
-      // The trial has ended, or the date looks wrong: the Licence panel explains what to do.
-      if (String(e).startsWith("LICENCE:")) {
+      // Not signed in: the sign-in screen. The trial has ended, or the date looks wrong: the
+      // Licence panel explains what to do.
+      if (String(e).startsWith("SIGNIN:")) {
+        set({ signInOpen: true, licence: await api.licenceStatus().catch(() => get().licence) });
+      } else if (String(e).startsWith("LICENCE:")) {
         set({ licenceOpen: true, licence: await api.licenceStatus().catch(() => get().licence) });
       } else {
         set({ error: String(e) });

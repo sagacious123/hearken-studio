@@ -23,6 +23,11 @@ pub struct Record {
     pub trial_pass: Option<String>,
     /// The church's licence key.
     pub licence: Option<String>,
+    /// Signed in: the session to renew with, and the signed pass that works offline.
+    pub session: Option<String>,
+    pub account_pass: Option<String>,
+    /// Stands in for the computer's ID on systems that won't give one.
+    pub install_id: Option<String>,
 }
 
 impl Record {
@@ -37,6 +42,9 @@ impl Record {
             activity_checked: a.activity_checked.max(b.activity_checked),
             trial_pass: a.trial_pass.or(b.trial_pass),
             licence: a.licence.or(b.licence),
+            session: a.session.or(b.session),
+            account_pass: a.account_pass.or(b.account_pass),
+            install_id: a.install_id.or(b.install_id),
         })
     }
 }
