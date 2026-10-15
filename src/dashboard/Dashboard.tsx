@@ -4,7 +4,7 @@ import { ControlBar } from "./components/ControlBar";
 import { DetectionQueue } from "./components/DetectionQueue";
 import { Finder, Monitors } from "./components/PreviewPane";
 import { Sidebar } from "./components/Sidebar";
-import { PanelHeader, TranscriptPanel } from "./components/TranscriptPanel";
+import { PanelHeader, SingingBadge, TranscriptPanel } from "./components/TranscriptPanel";
 import { StyleDrawer } from "./components/StylePanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { useDashboard } from "./store";
@@ -53,7 +53,7 @@ export function Dashboard() {
             <div className="grid min-h-0 grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] gap-3">
               <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800 bg-white/[.02]">
                 <PanelHeader title="Transcript">
-                  <span className="font-ui text-[11px] font-light normal-case tracking-normal text-zinc-500">Checked lines marked ✓</span>
+                  <SingingBadge />
                 </PanelHeader>
                 <TranscriptPanel />
               </section>

@@ -7,6 +7,7 @@
 pub mod capture;
 pub mod resample;
 pub mod segmenter;
+pub mod singing;
 pub mod vad;
 
 /// Whisper's native sample rate.

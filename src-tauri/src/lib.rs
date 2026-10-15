@@ -28,6 +28,8 @@ pub mod events {
     pub const MODEL_PROGRESS: &str = "models://progress";
     pub const LIBRARY_PROGRESS: &str = "library://progress";
     pub const VOICE_COMMAND: &str = "pipeline://voice-command";
+    /// The room started (true) or stopped (false) singing.
+    pub const SINGING: &str = "pipeline://singing";
     pub const MEANING_PROGRESS: &str = "meaning://progress";
 }
 

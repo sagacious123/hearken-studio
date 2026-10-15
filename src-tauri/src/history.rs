@@ -35,7 +35,13 @@ pub enum Entry {
     },
     /// A final transcript line.
     #[serde(rename_all = "camelCase")]
-    Said { at: i64, text: String },
+    Said {
+        at: i64,
+        text: String,
+        /// Heard sung, not spoken: left out of sermon notes.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        sung: bool,
+    },
     /// Queued for the operator (shown or not).
     #[serde(rename_all = "camelCase")]
     Detected {
@@ -119,8 +125,8 @@ impl History {
         *self.last_shown.lock() = None;
     }
 
-    pub fn said(&self, text: &str) {
-        self.append(&Entry::Said { at: now_ms(), text: text.to_owned() });
+    pub fn said(&self, text: &str, sung: bool) {
+        self.append(&Entry::Said { at: now_ms(), text: text.to_owned(), sung });
     }
 
     pub fn detected(&self, slide: &Slide, kind: &str, confidence: f32, matched: &str) {
@@ -211,7 +217,7 @@ impl History {
             let mut seen = HashSet::new();
             for e in self.load(&date).into_iter().rev() {
                 let hit = match e {
-                    Entry::Said { at, text } if reference.is_none() && text_match(&text) => {
+                    Entry::Said { at, text, .. } if reference.is_none() && text_match(&text) => {
                         Some(ArchiveHit { date: date.clone(), time: time_of(at), kind: "said", label: None, text })
                     }
                     Entry::Shown { at, label, text, reference: r, .. } if ref_match(&r) || (reference.is_none() && text_match(&label)) => {
@@ -442,7 +448,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let h = History::new(dir.clone());
         let john = slide("KJV:43.3.16", "John 3:16", 43);
-        h.said("turn with me to John 3 16");
+        h.said("turn with me to John 3 16", false);
         h.detected(&john, "explicit", 0.95, "john 3 16");
         h.shown(&john);
         h.shown(&john); // re-sent: logged once

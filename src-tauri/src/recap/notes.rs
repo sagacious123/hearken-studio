@@ -276,7 +276,7 @@ pub fn notes_from(entries: &[Entry]) -> SermonNotes {
     let cleaned: Vec<(i64, String)> = entries
         .iter()
         .filter_map(|e| match e {
-            Entry::Said { at, text } if !singing.iter().any(|(a, b)| (*a..*b).contains(at)) => Some((*at, speech(text))),
+            Entry::Said { at, text, sung: false } if !singing.iter().any(|(a, b)| (*a..*b).contains(at)) => Some((*at, speech(text))),
             _ => None,
         })
         .filter(|(_, t)| !t.is_empty())
@@ -396,7 +396,7 @@ mod tests {
     use super::*;
 
     fn said(at_s: i64, text: &str) -> Entry {
-        Entry::Said { at: at_s * 1000, text: text.into() }
+        Entry::Said { at: at_s * 1000, text: text.into(), sung: false }
     }
 
     #[test]
@@ -438,6 +438,22 @@ mod tests {
         assert!(!all.iter().any(|p| p.contains("begotten")), "verse read aloud: {all:?}");
         let john = notes.sections.iter().find(|s| s.heading.as_deref() == Some("John 3:16–17")).expect("merged heading");
         assert!(!john.points.is_empty());
+    }
+
+    #[test]
+    fn sung_lines_are_not_points() {
+        let mut entries: Vec<Entry> = (0..6)
+            .map(|i| said(i * 10, "Grace means God gives his love freely, and faith is how you receive that grace every single day."))
+            .collect();
+        for e in &mut entries[1..] {
+            if let Entry::Said { text, sung, .. } = e {
+                *text = "Your grace and love and faith will carry me through every single day of my life, my God.".into();
+                *sung = true;
+            }
+        }
+        let notes = notes_from(&entries);
+        let all: Vec<&str> = notes.sections.iter().flat_map(|s| s.points.iter().map(String::as_str)).collect();
+        assert!(!all.iter().any(|p| p.contains("carry me")), "sung: {all:?}");
     }
 
     #[test]
@@ -494,7 +510,7 @@ mod tests {
                         let reference = ScriptureRef { book_id: book, chapter, verse_start: Some(from), verse_end: (to > from).then_some(to) };
                         Entry::Shown { at, label: reference.label(), translation: "KJV".into(), text: p.next().unwrap().into(), reference: Some(reference), song: None }
                     }
-                    None => Entry::Said { at, text: line.into() },
+                    None => Entry::Said { at, text: line.into(), sung: false },
                 }
             })
             .collect()

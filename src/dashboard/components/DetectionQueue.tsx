@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { Detection } from "../../lib/ipc";
 import { useDashboard } from "../store";
 import { PanelHeader } from "./TranscriptPanel";
@@ -22,6 +23,7 @@ export function DetectionQueue() {
           Preview follows latest
         </label>
       </PanelHeader>
+      <UnknownSong />
       <ul className="min-h-0 flex-1 overflow-y-auto">
         {queue.length === 0 && <li className="border-t border-zinc-800 px-4 py-4 text-sm font-light text-zinc-500">References and songs appear here as they’re spoken or sung.</li>}
         {queue.map((d) => (
@@ -35,6 +37,32 @@ export function DetectionQueue() {
         <Key k="Esc">clear</Key>
       </footer>
     </section>
+  );
+}
+
+/** How long the room sings, with no song recognised, before suggesting the song be added. */
+const UNKNOWN_SONG_AFTER_MS = 20_000;
+
+/** The room is singing, but nothing in the song library matches and no song is on screen. */
+function UnknownSong() {
+  const since = useDashboard((s) => s.singingSince);
+  const lastSongAt = useDashboard((s) => s.lastSongAt);
+  const songLive = useDashboard((s) => !!s.live?.slide?.song);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (since === null) return;
+    const wait = since + UNKNOWN_SONG_AFTER_MS - Date.now();
+    if (wait <= 0) return;
+    const t = setTimeout(() => tick((n) => n + 1), wait);
+    return () => clearTimeout(t);
+  }, [since]);
+  const show = since !== null && Date.now() - since >= UNKNOWN_SONG_AFTER_MS && !songLive && (lastSongAt === null || lastSongAt < since);
+  if (!show) return null;
+  return (
+    <p className="flex-none border-t border-zinc-800 bg-amber-500/[.06] px-4 py-2.5 text-xs font-light leading-snug text-zinc-300">
+      <span className="font-medium text-amber-200">♪ A song is being sung</span> that isn’t in your song library. Add its lyrics under Songs and
+      Hearken will find and follow it next time.
+    </p>
   );
 }
 

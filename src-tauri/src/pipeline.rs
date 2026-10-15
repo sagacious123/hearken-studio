@@ -45,6 +45,7 @@ use crate::{
         ms_to_samples,
         resample::Resampler16k,
         segmenter::{SegEvent, Segmenter, SegmenterConfig},
+        singing::{self, Classifier, Room},
         vad::SpeechDetector,
         LevelMeter, FRAME_SAMPLES, SAMPLE_RATE,
     },
@@ -104,6 +105,8 @@ pub struct PipelineConfig {
     pub bible_path: PathBuf,
     /// Second, more accurate model that re-transcribes each finished sentence.
     pub refine: Option<RefineConfig>,
+    /// YAMNet, to tell singing from speech; without it, only known lyrics count as singing.
+    pub singing_model: Option<PathBuf>,
 }
 
 pub struct RefineConfig {
@@ -203,6 +206,8 @@ struct TranscriptEvent {
     audio_ms: u32,
     /// From the accuracy pass: replaces the quick text of the same utterance.
     refined: bool,
+    /// Sung rather than spoken (finished sentences only).
+    sung: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -248,6 +253,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
     let infer_ewma = Arc::new(AtomicU32::new(0f32.to_bits()));
     let (job_tx, job_rx) = crossbeam_channel::unbounded::<Job>();
     let dedupe = Dedupe::default();
+    let room = Arc::new(Room::default());
 
     // 0. Accuracy-pass thread. Loads in the background (a large model can take seconds), and
     //    never blocks or fails listening: until it's ready, or if it can't load, sentences just
@@ -255,7 +261,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
     let (refine_tx, refine_thread, refine_model) = match cfg.refine {
         Some(rc) => {
             let (tx, rx) = crossbeam_channel::bounded::<RefineJob>(REFINE_QUEUE);
-            let (app, v11n, bible_path, dedupe) = (app.clone(), v11n.clone(), cfg.bible_path.clone(), dedupe.clone());
+            let (app, v11n, bible_path, dedupe, room) = (app.clone(), v11n.clone(), cfg.bible_path.clone(), dedupe.clone(), room.clone());
             let name = rc.model_name.clone();
             let handle = thread::Builder::new().name("asr-refine".into()).spawn(move || {
                 priority::background();
@@ -295,7 +301,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
                     return;
                 }
                 log::info!("accuracy pass ready: {} on {} ({})", rc.model_name, engine.backend(), cal.describe());
-                RefineWorker { app, bible, v11n, parser: ReferenceParser::new(), dedupe, opts: cal.options(), lyrics: LyricsIndex::default() }.run(&mut engine, rx);
+                RefineWorker { app, bible, v11n, parser: ReferenceParser::new(), dedupe, opts: cal.options(), lyrics: LyricsIndex::default(), room }.run(&mut engine, rx);
                 log::info!("accuracy pass stopped");
             })?;
             (Some(tx), Some(handle), Some(name))
@@ -307,6 +313,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
     let (ready_tx, ready_rx) = crossbeam_channel::bounded::<Result<&'static str>>(1);
     let asr = {
         let app = app.clone();
+        let room = room.clone();
         let step_ms = step_ms.clone();
         let infer_ewma = infer_ewma.clone();
         let (model_path, use_gpu, threads, reduced_ctx, bible_path, base_step) =
@@ -339,12 +346,49 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
                 base_step,
                 reduced_ctx,
                 last_sentence: None,
+                room,
             };
             worker.run(&mut engine, job_rx);
             log::info!("asr thread stopped");
         })?
     };
     let backend = ready_rx.recv().map_err(|_| anyhow!("ASR thread exited during startup"))??;
+
+    // 1b. Singing detector: is the room singing or speaking? Off the critical path: frames are
+    //     dropped rather than queued if it falls behind, and listening works without it.
+    let (sound_tx, singing_thread) = match cfg.singing_model.filter(|p| p.exists()) {
+        Some(model) => {
+            let (tx, rx) = crossbeam_channel::bounded::<(Instant, Vec<f32>)>(4);
+            let (app, room) = (app.clone(), room.clone());
+            let handle = thread::Builder::new().name("singing".into()).spawn(move || {
+                priority::background();
+                let classifier = match Classifier::load(&model) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        log::warn!("singing detection unavailable: {e:#}");
+                        return;
+                    }
+                };
+                let mut was = false;
+                for (at, frame) in rx {
+                    match classifier.classify(&frame) {
+                        Ok(scores) => room.push(at, scores.sound()),
+                        Err(e) => log::debug!("singing detection failed on a frame: {e:#}"),
+                    }
+                    let now = room.singing_now();
+                    if now != was {
+                        was = now;
+                        let _ = app.emit(events::SINGING, now);
+                    }
+                }
+                if was {
+                    let _ = app.emit(events::SINGING, false);
+                }
+            })?;
+            (Some(tx), Some(handle))
+        }
+        None => (None, None),
+    };
 
     // 2. Capture → lock-free ring (≈ 2 s at 48 kHz).
     let (producer, consumer) = HeapRb::<f32>::new(96_000).split();
@@ -363,7 +407,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
         let rate = capture.sample_rate;
         thread::Builder::new().name("dsp".into()).spawn(move || {
             priority::interactive();
-            if let Err(e) = dsp_loop(consumer, rate, job_tx, &stop, &step_ms, &infer_ewma, &app) {
+            if let Err(e) = dsp_loop(consumer, rate, job_tx, sound_tx, &stop, &step_ms, &infer_ewma, &app) {
                 log::error!("dsp thread failed: {e:#}");
                 let _ = app.emit(events::ERROR, format!("{e:#}"));
             }
@@ -379,9 +423,9 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
         step_ms: cfg.step_ms,
     };
     log::info!("pipeline started: {info:?}");
-    // Joined in order: DSP ends, then the live ASR thread (dropping the accuracy-pass sender),
-    // then the accuracy pass drains and ends.
-    let threads = [Some(dsp), Some(asr), refine_thread].into_iter().flatten().collect();
+    // Joined in order: DSP ends (dropping the singing detector's sender), then the live ASR
+    // thread (dropping the accuracy-pass sender), then the accuracy pass drains and ends.
+    let threads = [Some(dsp), singing_thread, Some(asr), refine_thread].into_iter().flatten().collect();
     Ok(PipelineHandle { stop, capture: Some(capture), threads, info })
 }
 
@@ -389,6 +433,7 @@ fn dsp_loop(
     mut consumer: HeapCons<f32>,
     input_rate: u32,
     jobs: Sender<Job>,
+    sounds: Option<Sender<(Instant, Vec<f32>)>>,
     stop: &AtomicBool,
     step_ms: &AtomicU32,
     infer_ewma: &AtomicU32,
@@ -400,6 +445,7 @@ fn dsp_loop(
     let mut meter = LevelMeter::default();
     let mut raw = vec![0f32; 4096];
     let mut pcm: Vec<f32> = Vec::with_capacity(SAMPLE_RATE);
+    let mut sound: Vec<f32> = Vec::with_capacity(singing::FRAME);
     let mut since_partial = 0usize;
     let mut last_status = Instant::now();
     let started = Instant::now();
@@ -431,6 +477,12 @@ fn dsp_loop(
             let frame = &pcm[offset..offset + FRAME_SAMPLES];
             offset += FRAME_SAMPLES;
             meter.push(frame);
+            if let Some(tx) = &sounds {
+                sound.extend_from_slice(frame);
+                if sound.len() >= singing::FRAME {
+                    let _ = tx.try_send((captured_at, std::mem::replace(&mut sound, Vec::with_capacity(singing::FRAME))));
+                }
+            }
 
             match seg.push(frame, vad.is_speech(frame)) {
                 Some(SegEvent::Start(id)) => {
@@ -493,6 +545,7 @@ struct AsrWorker {
     reduced_ctx: bool,
     /// The last finished sentence, for a command split by a pause ("Go to verse." / "6.").
     last_sentence: Option<(Instant, String)>,
+    room: Arc<Room>,
 }
 
 impl AsrWorker {
@@ -579,6 +632,7 @@ impl AsrWorker {
             }
         };
         let inference_ms = t0.elapsed().as_secs_f32() * 1000.0;
+        let sung = job.is_final && self.room.sung(heard_from(&job.audio, job.captured_at), job.captured_at);
 
         if !job.is_final {
             // Adapt cadence: keep the step ~25% above decode time so the ASR thread never saturates.
@@ -599,6 +653,7 @@ impl AsrWorker {
                 inference_ms,
                 audio_ms: (job.audio.len() * 1000 / SAMPLE_RATE) as u32,
                 refined: false,
+                sung,
             },
         );
         if transcript.text.is_empty() {
@@ -612,12 +667,12 @@ impl AsrWorker {
         let asr_factor = 0.7 + 0.3 * transcript.confidence.clamp(0.0, 1.0);
         if job.is_final && !refining {
             // With the accuracy pass on, the archive gets its (better) text instead.
-            state.history.said(&transcript.text);
+            state.history.said(&transcript.text, sung);
         }
 
         // Spoken commands ("next verse", "go back", "go to verse 6"): finished sentences only, so
-        // a command acts once, and only while a scripture is on screen.
-        if job.is_final {
+        // a command acts once, and only while a scripture is on screen. A sung "go back" is a lyric.
+        if job.is_final && !sung {
             let previous = self.last_sentence.take().filter(|(at, _)| at.elapsed() < Duration::from_secs(8)).map(|(_, t)| t);
             let command = settings
                 .voice_commands
@@ -655,16 +710,16 @@ impl AsrWorker {
             follow::Action::None => {}
         }
 
-        // During worship (a song on screen), a line that matches an imported song is being sung:
-        // a Bible phrase in it is a lyric, not a verse being quoted. In the sermon, a pastor
-        // quoting the same words is still a quote.
-        let sung = self.lyrics.detect(&transcript.text);
-        let singing = sung.is_some() && live.slide.as_ref().is_some_and(|s| s.is_song());
+        // A Bible phrase that's sung is a lyric, not a verse being quoted: when the room is heard
+        // singing, or during worship (a song on screen) when the line matches an imported song.
+        // In the sermon, a pastor quoting the same words is still a quote.
+        let lyric = self.lyrics.detect(&transcript.text);
+        let singing = sung || (lyric.is_some() && live.slide.as_ref().is_some_and(|s| s.is_song()));
 
         // Worship songs: which imported song is being sung (a new one, not the live one).
         if settings.lyrics_detection {
             let live_song = live.slide.as_ref().and_then(|s| s.song.as_ref()).map(|p| p.song_id.clone());
-            let found = sung.filter(|m| m.slide.song.as_ref().map(|p| &p.song_id) != live_song.as_ref());
+            let found = lyric.filter(|m| m.slide.song.as_ref().map(|p| &p.song_id) != live_song.as_ref());
             if let Some(m) = found {
                 if self.dedupe.should_emit(&m.slide.id, job.utterance, false) {
                     let confidence = m.score * asr_factor;
@@ -701,6 +756,12 @@ impl AsrWorker {
 /// References in a transcript: announced ("John 3:16") and, on finished sentences with nothing
 /// announced, quoted verses.
 #[allow(clippy::too_many_arguments)]
+/// When the first sample of a sentence was heard.
+fn heard_from(audio: &[f32], captured_at: Instant) -> Instant {
+    let len = Duration::from_secs_f32(audio.len() as f32 / SAMPLE_RATE as f32);
+    captured_at.checked_sub(len).unwrap_or(captured_at)
+}
+
 fn find_references(
     parser: &mut ReferenceParser,
     bible: &BibleDb,
@@ -815,6 +876,7 @@ struct RefineWorker {
     opts: DecodeOptions,
     /// To tell a sung lyric from a quoted verse, as the live pass does.
     lyrics: LyricsIndex,
+    room: Arc<Room>,
 }
 
 impl RefineWorker {
@@ -829,10 +891,11 @@ impl RefineWorker {
 
             // Fallen behind: let this sentence keep its quick text rather than grow a backlog.
             let waited = job.captured_at.elapsed();
+            let sung = self.room.sung(heard_from(&job.audio, job.captured_at), job.captured_at);
             if waited > REFINE_MAX_WAIT {
                 log::info!("accuracy pass behind ({:.1} s); utterance {} keeps the quick text", waited.as_secs_f32(), job.utterance);
                 if let Some(text) = job.quick_text.get() {
-                    state.history.said(text);
+                    state.history.said(text, sung);
                 }
                 continue;
             }
@@ -857,12 +920,13 @@ impl RefineWorker {
                     inference_ms,
                     audio_ms: (job.audio.len() * 1000 / SAMPLE_RATE) as u32,
                     refined: true,
+                    sung,
                 },
             );
             if transcript.text.is_empty() {
                 continue;
             }
-            state.history.said(&transcript.text);
+            state.history.said(&transcript.text, sung);
             let late = job.captured_at.elapsed();
             if late > REFINE_MAX_LATE {
                 log::info!("accuracy pass took {:.1} s for utterance {}; its references are too late to queue", late.as_secs_f32(), job.utterance);
@@ -875,7 +939,7 @@ impl RefineWorker {
             if self.lyrics.version() != library {
                 self.lyrics.refresh(library, state.songs.all());
             }
-            let singing = state.presenter.snapshot().slide.as_ref().is_some_and(|s| s.is_song()) && self.lyrics.detect(&transcript.text).is_some();
+            let singing = sung || (state.presenter.snapshot().slide.as_ref().is_some_and(|s| s.is_song()) && self.lyrics.detect(&transcript.text).is_some());
             emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, singing, job.utterance, job.captured_at);
         }
     }

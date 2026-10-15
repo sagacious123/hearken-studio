@@ -27,6 +27,8 @@ export interface TranscriptLine {
   refined: boolean;
   /** When it was heard (ms since epoch). */
   at: number;
+  /** Sung rather than spoken. */
+  sung: boolean;
 }
 
 interface DashboardState {
@@ -42,6 +44,10 @@ interface DashboardState {
   queue: Detection[];
   /** Spoken commands, by the sentence that gave them. */
   voiceCommands: Record<number, VoiceCommand>;
+  /** Since when the room has been singing (ms since epoch), or null. */
+  singingSince: number | null;
+  /** When a song from the library was last recognised (ms since epoch). */
+  lastSongAt: number | null;
   lastLatencyMs: number | null;
 
   preview: Slide | null;
@@ -113,6 +119,8 @@ export const useDashboard = create<DashboardState>((set, get) => ({
   partial: null,
   queue: [],
   voiceCommands: {},
+  singingSince: null,
+  lastSongAt: null,
   lastLatencyMs: null,
   preview: null,
   followLatest: true,
@@ -140,7 +148,7 @@ export const useDashboard = create<DashboardState>((set, get) => ({
           set({ partial: t.text ? t : null });
           return;
         }
-        const line = { utteranceId: t.utteranceId, text: t.text, confidence: t.confidence, inferenceMs: t.inferenceMs, refined: t.refined, at: Date.now() };
+        const line = { utteranceId: t.utteranceId, text: t.text, confidence: t.confidence, inferenceMs: t.inferenceMs, refined: t.refined, at: Date.now(), sung: t.sung };
         if (t.refined) {
           // The accuracy pass replaces the quick text of the same sentence (or fills it in).
           if (!t.text) return;
@@ -167,10 +175,11 @@ export const useDashboard = create<DashboardState>((set, get) => ({
             .filter((q) => !(q.tentative && !d.tentative && q.utteranceId === d.utteranceId && sameChapter(q, d)));
           const next = [d, ...queue].slice(0, MAX_QUEUE);
           const preview = s.followLatest && !d.tentative ? d.slide : s.preview;
-          return { queue: next, preview, lastLatencyMs: d.latencyMs };
+          return { queue: next, preview, lastLatencyMs: d.latencyMs, lastSongAt: d.kind === "song" ? Date.now() : s.lastSongAt };
         });
       }),
       events.voiceCommand((c) => set((s) => ({ voiceCommands: { ...s.voiceCommands, [c.utteranceId]: c } }))),
+      events.singing((on) => set((s) => ({ singingSince: on ? (s.singingSince ?? Date.now()) : null }))),
       events.status((status) => set({ status })),
       events.pipelineError((error) => set({ error, running: false })),
       events.pipelineWarning((warning) => set({ error: warning || null })),
@@ -199,7 +208,7 @@ export const useDashboard = create<DashboardState>((set, get) => ({
 
   stop: async () => {
     await api.stopPipeline();
-    set({ running: false, status: null, partial: null });
+    set({ running: false, status: null, partial: null, singingSince: null });
   },
 
   saveSettings: async (patch) => {

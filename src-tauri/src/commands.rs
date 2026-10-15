@@ -167,6 +167,7 @@ pub async fn start_pipeline(app: AppHandle, state: State<'_, AppState>) -> CmdRe
         reduced_ctx: settings.reduced_encoder_ctx,
         bible_path: state.paths.bible_db.clone(),
         refine,
+        singing_model: Some(state.paths.models_dir.join("yamnet.onnx")),
     };
     let v11n = state.versification.clone();
     let app2 = app.clone();

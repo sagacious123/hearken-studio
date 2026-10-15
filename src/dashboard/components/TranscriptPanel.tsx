@@ -39,7 +39,12 @@ export function TranscriptPanel() {
         >
           <time className="pt-0.5 text-xs tabular-nums text-zinc-500">{clock(l.at)}</time>
           <p>
-            <span className={l.confidence < 0.6 ? "text-zinc-400" : "text-zinc-200"}>{l.text}</span>
+            <span className={l.sung ? "italic text-zinc-400" : l.confidence < 0.6 ? "text-zinc-400" : "text-zinc-200"}>{l.text}</span>
+            {l.sung && (
+              <span className="ml-2 inline-block rounded bg-zinc-800 px-1.5 align-middle text-xs text-zinc-400" title="Heard sung, not spoken: not treated as a quote or a command, and left out of sermon notes">
+                ♪ sung
+              </span>
+            )}
             {l.refined && <span className="ml-1.5 align-middle text-[10px] text-zinc-500" aria-label="checked">✓</span>}
             {voice[l.utteranceId] && (
               <span
@@ -69,6 +74,20 @@ export function TranscriptPanel() {
       )}
       <div ref={endRef} />
     </div>
+  );
+}
+
+/** Shown in the transcript header while the room is singing. */
+export function SingingBadge() {
+  const singing = useDashboard((s) => s.singingSince !== null);
+  if (!singing) return <span className="font-ui text-[11px] font-light normal-case tracking-normal text-zinc-500">Checked lines marked ✓</span>;
+  return (
+    <span
+      className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 font-ui text-[11px] font-medium normal-case tracking-normal text-amber-200"
+      title="The room is singing: sung Bible phrases aren't suggested as quotes, and voice commands are ignored"
+    >
+      <span className="animate-pulse">♪</span> Singing
+    </span>
   );
 }
 

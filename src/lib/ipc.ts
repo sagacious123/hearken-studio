@@ -60,6 +60,8 @@ export interface TranscriptEvent {
   audioMs: number;
   /** From the accuracy pass: replaces the quick text of the same utterance. */
   refined: boolean;
+  /** Sung rather than spoken (finished sentences only). */
+  sung: boolean;
 }
 
 export type DetectionKind = "explicit" | "contextual" | "quote" | "song" | "meaning" | "command";
@@ -379,6 +381,8 @@ export const events = {
   transcript: on<TranscriptEvent>("pipeline://transcript"),
   detection: on<Detection>("pipeline://detection"),
   voiceCommand: on<VoiceCommand>("pipeline://voice-command"),
+  /** The room started (true) or stopped (false) singing. */
+  singing: on<boolean>("pipeline://singing"),
   status: on<PipelineStatus>("pipeline://status"),
   pipelineError: on<string>("pipeline://error"),
   /** Listening continues; "" clears the warning. */

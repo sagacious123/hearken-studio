@@ -3,6 +3,7 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 src-tauri/resources/models/*.bin
+src-tauri/resources/models/*.onnx
 src-tauri/resources/bench/*.wav
 src-tauri/resources/bible.db
 # Downloaded by `npm run bible:fetch` (and in CI); ~23 MB of public-domain CSVs

@@ -25,5 +25,12 @@ fetch() {
 fetch "$HF/ggml-tiny.en-q5_1.bin" "$MODELS/ggml-tiny.en-q5_1.bin" 20000000
 fetch "$HF/ggml-base.en-q5_1.bin" "$MODELS/ggml-base.en-q5_1.bin" 40000000
 
+# YAMNet (Google, Apache 2.0): tells singing from speech so sung lines aren't taken for quotes.
+# Pinned to one revision and checked, since it's run as code-like ONNX.
+YAMNET_REV="f25b741c2f0bdc6d7e6db24b5fddda23347dbafd"
+fetch "https://huggingface.co/audiomagic/yamnet-onnx/resolve/$YAMNET_REV/yamnet.onnx" "$MODELS/yamnet.onnx" 16000000
+echo "d3835ffbbd4a1bb3e777f0ca217b5007907f5171dd5d17c4236b95b2af8f908e  $MODELS/yamnet.onnx" | shasum -a 256 -c --quiet \
+  || { rm -f "$MODELS/yamnet.onnx"; echo "yamnet.onnx checksum mismatch" >&2; exit 1; }
+
 # 11 s, 16 kHz mono public-domain speech clip shipped with whisper.cpp.
 fetch "https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav" "$BENCH/jfk.wav" 100000
