@@ -29,7 +29,7 @@ export function TranscriptPanel() {
   }, [finals, partial]);
 
   return (
-    <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-4 pb-3 text-[15px] font-light leading-relaxed">
+    <div className="min-h-0 flex-1 select-text cursor-auto space-y-2.5 overflow-y-auto px-4 pb-3 text-[15px] font-light leading-relaxed">
       {finals.length === 0 && !partial && <p className="text-zinc-500">Waiting for speech…</p>}
       {finals.map((l) => (
         <div
