@@ -295,7 +295,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
                     return;
                 }
                 log::info!("accuracy pass ready: {} on {} ({})", rc.model_name, engine.backend(), cal.describe());
-                RefineWorker { app, bible, v11n, parser: ReferenceParser::new(), dedupe, opts: cal.options() }.run(&mut engine, rx);
+                RefineWorker { app, bible, v11n, parser: ReferenceParser::new(), dedupe, opts: cal.options(), lyrics: LyricsIndex::default() }.run(&mut engine, rx);
                 log::info!("accuracy pass stopped");
             })?;
             (Some(tx), Some(handle), Some(name))
@@ -655,10 +655,16 @@ impl AsrWorker {
             follow::Action::None => {}
         }
 
+        // During worship (a song on screen), a line that matches an imported song is being sung:
+        // a Bible phrase in it is a lyric, not a verse being quoted. In the sermon, a pastor
+        // quoting the same words is still a quote.
+        let sung = self.lyrics.detect(&transcript.text);
+        let singing = sung.is_some() && live.slide.as_ref().is_some_and(|s| s.is_song());
+
         // Worship songs: which imported song is being sung (a new one, not the live one).
         if settings.lyrics_detection {
             let live_song = live.slide.as_ref().and_then(|s| s.song.as_ref()).map(|p| p.song_id.clone());
-            let found = self.lyrics.detect(&transcript.text).filter(|m| m.slide.song.as_ref().map(|p| &p.song_id) != live_song.as_ref());
+            let found = sung.filter(|m| m.slide.song.as_ref().map(|p| &p.song_id) != live_song.as_ref());
             if let Some(m) = found {
                 if self.dedupe.should_emit(&m.slide.id, job.utterance, false) {
                     let confidence = m.score * asr_factor;
@@ -688,7 +694,7 @@ impl AsrWorker {
 
         let meaning = settings.meaning_detection.then(|| state.meaning.lock().clone()).flatten();
         let refs = find_references(&mut self.parser, &self.bible, &self.v11n, &transcript.text, job.is_final, settings.quote_detection, meaning.as_deref(), asr_factor);
-        emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, job.utterance, job.captured_at);
+        emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, singing, job.utterance, job.captured_at);
     }
 }
 
@@ -743,10 +749,16 @@ fn emit_references(
     bible: &BibleDb,
     dedupe: &Dedupe,
     refs: Vec<ParsedRef>,
+    singing: bool,
     utterance: u64,
     captured_at: Instant,
 ) {
+    // During worship a scripture suggestion is only a card: it never replaces the song by itself.
+    let song_live = state.presenter.snapshot().slide.as_ref().is_some_and(|s| s.is_song());
     for mut r in refs {
+        if singing && matches!(r.kind, RefKind::Quote | RefKind::Meaning) {
+            continue; // a lyric that borrows Bible words ("The Lord is my shepherd")
+        }
         if !dedupe.should_emit(&r.reference.key(), utterance, r.tentative) {
             continue;
         }
@@ -767,7 +779,7 @@ fn emit_references(
             RefKind::Meaning => f32::INFINITY, // a suggestion for the operator, never projected by itself
             _ => settings.auto_threshold,
         };
-        let auto = settings.auto_project && !r.tentative && r.confidence >= threshold;
+        let auto = settings.auto_project && !r.tentative && r.confidence >= threshold && !song_live;
         let auto_projected = auto && state.presenter.present(app, slide.clone());
         if !r.tentative {
             state.history.detected(&slide, r.kind.name(), r.confidence, &r.matched);
@@ -801,6 +813,8 @@ struct RefineWorker {
     parser: ReferenceParser,
     dedupe: Dedupe,
     opts: DecodeOptions,
+    /// To tell a sung lyric from a quoted verse, as the live pass does.
+    lyrics: LyricsIndex,
 }
 
 impl RefineWorker {
@@ -857,7 +871,12 @@ impl RefineWorker {
             let asr_factor = 0.7 + 0.3 * transcript.confidence.clamp(0.0, 1.0);
             let meaning = settings.meaning_detection.then(|| state.meaning.lock().clone()).flatten();
             let refs = find_references(&mut self.parser, &self.bible, &self.v11n, &transcript.text, true, settings.quote_detection, meaning.as_deref(), asr_factor);
-            emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, job.utterance, job.captured_at);
+            let library = state.songs.version();
+            if self.lyrics.version() != library {
+                self.lyrics.refresh(library, state.songs.all());
+            }
+            let singing = state.presenter.snapshot().slide.as_ref().is_some_and(|s| s.is_song()) && self.lyrics.detect(&transcript.text).is_some();
+            emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, singing, job.utterance, job.captured_at);
         }
     }
 }

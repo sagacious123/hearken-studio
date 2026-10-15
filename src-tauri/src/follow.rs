@@ -275,4 +275,20 @@ mod tests {
         assert_eq!(m.phrase, "amazing grace how sweet the sound");
         assert!(idx.detect("good morning church").is_none());
     }
+
+    /// A worship song built on a psalm: the sung line is recognised as the song, and the same
+    /// words also match the verse, which is why scripture found in singing is held back while a
+    /// song is on screen (see `pipeline::emit_references`).
+    #[test]
+    fn a_scripture_song_is_recognised_as_singing() {
+        let mut idx = LyricsIndex::default();
+        idx.refresh(1, vec![songs::parse("The Lord's My Shepherd\n\nVerse 1\nThe Lord is my shepherd I shall not want\nHe makes me down to lie").unwrap()]);
+        let sung = "the lord is my shepherd i shall not want";
+        assert!(idx.detect(sung).is_some(), "recognised as the song");
+        let bible = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/bible.db");
+        if let Ok(db) = crate::scripture::BibleDb::open(&bible) {
+            let quotes = crate::scripture::quote::find_quotes(&db, sung).unwrap();
+            assert!(quotes.iter().any(|q| q.reference.book_id == 19 && q.reference.chapter == 23), "and also as Psalm 23: {quotes:?}");
+        }
+    }
 }
