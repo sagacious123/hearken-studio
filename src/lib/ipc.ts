@@ -51,6 +51,14 @@ export interface OutputState {
   revision: number;
 }
 
+/** The free trial or the church's licence. Times are Unix seconds. */
+export type LicenceStatus =
+  | { state: "trial"; ends: number; daysLeft: number; registered: boolean }
+  | { state: "trialOver"; ended: number }
+  | { state: "licensed"; church: string; plan: string; expires: number; inGrace: boolean }
+  | { state: "licenceExpired"; church: string; expired: number }
+  | { state: "clockBehind"; now: number; seen: number };
+
 export interface TranscriptEvent {
   utteranceId: number;
   text: string;
@@ -318,6 +326,10 @@ export const api = {
   listAudioDevices: () => invoke<DeviceInfo[]>("list_audio_devices"),
   startPipeline: () => invoke<PipelineInfo>("start_pipeline"),
   stopPipeline: () => invoke<void>("stop_pipeline"),
+  licenceStatus: () => invoke<LicenceStatus>("licence_status"),
+  activateLicence: (key: string) => invoke<LicenceStatus>("activate_licence", { key }),
+  /** Registers the trial and checks the clock against the website's (needs the internet). */
+  checkLicenceOnline: () => invoke<LicenceStatus>("check_licence_online"),
   /** The running session, if listening. */
   pipelineInfo: () => invoke<PipelineInfo | null>("pipeline_info"),
   listTranslations: () => invoke<Translation[]>("list_translations"),
@@ -383,6 +395,7 @@ export const events = {
   transcript: on<TranscriptEvent>("pipeline://transcript"),
   detection: on<Detection>("pipeline://detection"),
   voiceCommand: on<VoiceCommand>("pipeline://voice-command"),
+  licence: on<LicenceStatus>("licence://status"),
   /** The room started (true) or stopped (false) singing. */
   singing: on<boolean>("pipeline://singing"),
   status: on<PipelineStatus>("pipeline://status"),

@@ -6,6 +6,7 @@ import { useDashboard } from "../store";
 import { useDismiss } from "../useDismiss";
 import { AccuracyButton } from "./AccuracyButton";
 import { BibleLibrary } from "./BibleLibrary";
+import { LicenceChip } from "./Licence";
 import { ScreensButton } from "./ScreensButton";
 import { ShareButton } from "./ShareButton";
 
@@ -74,6 +75,7 @@ export function ControlBar() {
         </svg>
         <span className="hidden min-[1250px]:inline">HEARKEN</span>
       </div>
+      <LicenceChip />
 
       <ListenButton
         running={s.running}
@@ -434,6 +436,15 @@ function SettingsMenu({
               hint="Yoruba, Igbo, Hausa and more"
             >
               Bibles
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                setOpen(false);
+                useDashboard.getState().setLicenceOpen(true);
+              }}
+              hint="Free trial, licence key"
+            >
+              Licence
             </MenuItem>
           </div>
           <div className="space-y-2.5 border-t border-zinc-800 pt-3">

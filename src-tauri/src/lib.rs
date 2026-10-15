@@ -4,6 +4,7 @@ mod backgrounds;
 mod commands;
 mod follow;
 mod history;
+mod licence;
 mod recap;
 mod voice;
 mod pipeline;
@@ -31,6 +32,8 @@ pub mod events {
     /// The room started (true) or stopped (false) singing.
     pub const SINGING: &str = "pipeline://singing";
     pub const MEANING_PROGRESS: &str = "meaning://progress";
+    /// The trial or licence changed (after an online check).
+    pub const LICENCE: &str = "licence://status";
 }
 
 pub fn run() {
@@ -44,6 +47,7 @@ pub fn run() {
             app.manage(state);
             let handle = app.handle().clone();
             state::AppState::load_meaning(&handle);
+            state::AppState::check_licence(&handle);
             if let Err(e) = commands::apply_sharing(&handle, &handle.state::<state::AppState>()) {
                 log::warn!("local sharing not started: {e}");
             }
@@ -72,6 +76,9 @@ pub fn run() {
             commands::start_pipeline,
             commands::stop_pipeline,
             commands::pipeline_info,
+            commands::licence_status,
+            commands::activate_licence,
+            commands::check_licence_online,
             commands::list_translations,
             commands::search_scripture,
             commands::build_slide,

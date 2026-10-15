@@ -5,6 +5,7 @@ import { DetectionQueue } from "./components/DetectionQueue";
 import { Finder, Monitors } from "./components/PreviewPane";
 import { Sidebar } from "./components/Sidebar";
 import { PanelHeader, SingingBadge, TranscriptPanel } from "./components/TranscriptPanel";
+import { LicencePanel } from "./components/Licence";
 import { StyleDrawer } from "./components/StylePanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { useDashboard } from "./store";
@@ -62,6 +63,7 @@ export function Dashboard() {
           </section>
         </main>
         <StyleDrawer />
+        <LicencePanel />
       </div>
     </div>
   );

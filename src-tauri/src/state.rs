@@ -7,7 +7,7 @@ use std::{
 use anyhow::Result;
 use parking_lot::Mutex;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use tauri::{path::BaseDirectory, AppHandle, Manager};
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 
 use crate::{
     asr::hardware::{self, HardwareProfile},
@@ -211,6 +211,8 @@ pub struct AppState {
     pub downloads: Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
     /// Search by meaning, once its model is downloaded and loaded.
     pub meaning: Mutex<Option<Arc<scripture::meaning::Meaning>>>,
+    /// The free trial or the church's licence.
+    pub licence: crate::licence::Licensing,
 }
 
 impl AppState {
@@ -247,6 +249,7 @@ impl AppState {
         let presenter = Presenter::new(read_json(&paths.theme()), history.clone());
         let songs = SongLibrary::load(paths.songs());
         let plan = Plan::parse(&std::fs::read_to_string(paths.plan()).unwrap_or_default(), &versification);
+        let licence = crate::licence::Licensing::load(&paths.config_dir, app.path().app_local_data_dir().ok().as_deref(), paths.history());
 
         Ok(Self {
             paths,
@@ -263,7 +266,26 @@ impl AppState {
             share: Share::new(),
             downloads: Mutex::new(Default::default()),
             meaning: Mutex::new(None),
+            licence,
         })
+    }
+
+    /// Registers the trial, or settles a clock that looks wrong, if the internet is there.
+    /// Quietly does nothing otherwise: the trial runs offline and this is tried next start.
+    pub fn check_licence(app: &AppHandle) {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            use crate::licence::Status;
+            let state = app.state::<AppState>();
+            if matches!(state.licence.status(), Status::Trial { registered: false, .. } | Status::ClockBehind { .. }) {
+                match state.licence.check_online() {
+                    Ok(status) => {
+                        let _ = app.emit(crate::events::LICENCE, status);
+                    }
+                    Err(e) => log::info!("licence check skipped: {e}"),
+                }
+            }
+        });
     }
 
     /// Load search by meaning in the background when its model is downloaded (well under a

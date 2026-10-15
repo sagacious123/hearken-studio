@@ -4,6 +4,7 @@ import {
   events,
   type Detection,
   type HardwareProfile,
+  type LicenceStatus,
   type OutputState,
   type PipelineInfo,
   type PipelineStatus,
@@ -59,6 +60,10 @@ interface DashboardState {
   /** The Style drawer (slides in from the left; Preview stays visible). */
   styleOpen: boolean;
   setStyleOpen: (open: boolean) => void;
+  licence: LicenceStatus | null;
+  /** The Licence panel is open. */
+  licenceOpen: boolean;
+  setLicenceOpen: (open: boolean) => void;
 
   settings: Settings | null;
   translations: Translation[];
@@ -129,6 +134,9 @@ export const useDashboard = create<DashboardState>((set, get) => ({
   setDraftTheme: (draftTheme) => set({ draftTheme }),
   styleOpen: false,
   setStyleOpen: (styleOpen) => set({ styleOpen }),
+  licence: null,
+  licenceOpen: false,
+  setLicenceOpen: (licenceOpen) => set({ licenceOpen }),
   settings: null,
   translations: [],
   profile: null,
@@ -143,6 +151,7 @@ export const useDashboard = create<DashboardState>((set, get) => ({
       api.pipelineInfo().catch(() => null),
     ]);
     set({ settings, translations, profile, live, ...(info ? { running: true, info } : {}) });
+    void api.licenceStatus().then((licence) => set({ licence })).catch(console.error);
 
     const unlisteners = await Promise.all([
       events.transcript((t) => {
@@ -181,6 +190,7 @@ export const useDashboard = create<DashboardState>((set, get) => ({
         });
       }),
       events.voiceCommand((c) => set((s) => ({ voiceCommands: { ...s.voiceCommands, [c.utteranceId]: c } }))),
+      events.licence((licence) => set({ licence })),
       events.singing((on) => set((s) => ({ singingSince: on ? (s.singingSince ?? Date.now()) : null }))),
       events.status((status) => set({ status })),
       events.pipelineError((error) => set({ error, running: false })),
@@ -202,7 +212,12 @@ export const useDashboard = create<DashboardState>((set, get) => ({
       const profile = await api.getHardwareProfile();
       set({ running: true, info, profile });
     } catch (e) {
-      set({ error: String(e) });
+      // The trial has ended, or the date looks wrong: the Licence panel explains what to do.
+      if (String(e).startsWith("LICENCE:")) {
+        set({ licenceOpen: true, licence: await api.licenceStatus().catch(() => get().licence) });
+      } else {
+        set({ error: String(e) });
+      }
     } finally {
       set({ starting: false, benchProgress: null });
     }
