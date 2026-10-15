@@ -68,10 +68,39 @@ interface DashboardState {
   rebenchmark: () => Promise<void>;
 }
 
+/**
+ * A scripture slide built for other translations than the ones chosen now (side by side turned
+ * on or off, or the translation changed since it was detected or previewed).
+ */
+const outdated = (slide: Slide, s: Settings | null) => {
+  if (!s || slide.song) return false;
+  const want = s.secondaryTranslation && s.secondaryTranslation.toUpperCase() !== s.translation.toUpperCase() ? s.secondaryTranslation.toUpperCase() : null;
+  return slide.translation.toUpperCase() !== s.translation.toUpperCase() || (slide.secondary?.translation.toUpperCase() ?? null) !== want;
+};
+
+/** The same passage in the translations chosen now (unchanged if it can't be rebuilt). */
+const current = async (slide: Slide, s: Settings | null): Promise<Slide> => {
+  if (!s || !outdated(slide, s)) return slide;
+  try {
+    return (await api.buildSlide(slide.reference, s.translation)) ?? slide;
+  } catch {
+    return slide;
+  }
+};
+
 const sameJson = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
 const sameChapter = (a: Detection, b: Detection) =>
   a.slide.reference.bookId === b.slide.reference.bookId && a.slide.reference.chapter === b.slide.reference.chapter;
+
+/** Rebuild the Preview slide for `settings`, unless something else was previewed meanwhile. */
+function refreshPreview(settings: Settings | null) {
+  const before = useDashboard.getState().preview;
+  if (!before || !outdated(before, settings)) return;
+  void current(before, settings).then((fresh) => {
+    if (fresh !== before && useDashboard.getState().preview === before) useDashboard.setState({ preview: fresh });
+  });
+}
 
 export const useDashboard = create<DashboardState>((set, get) => ({
   running: false,
@@ -174,17 +203,23 @@ export const useDashboard = create<DashboardState>((set, get) => ({
   },
 
   saveSettings: async (patch) => {
-    const current = get().settings;
-    if (!current) return;
-    const settings = await api.updateSettings({ ...current, ...patch });
+    const existing = get().settings;
+    if (!existing) return;
+    const settings = await api.updateSettings({ ...existing, ...patch });
     set({ settings });
+    // Preview follows a change of translation or side by side straight away.
+    refreshPreview(settings);
   },
 
-  setPreview: (slide, pin = true) => set({ preview: slide, followLatest: !pin }),
+  setPreview: (slide, pin = true) => {
+    set({ preview: slide, followLatest: !pin });
+    // A card detected before the translations changed is shown as they are now.
+    if (slide && outdated(slide, get().settings)) refreshPreview(get().settings);
+  },
 
   goLive: async (slide) => {
     const target = slide ?? get().preview;
-    if (target) await api.present(target);
+    if (target) await api.present(await current(target, get().settings));
   },
 
   dismiss: (id) => set((s) => ({ queue: s.queue.filter((d) => d.id !== id) })),
