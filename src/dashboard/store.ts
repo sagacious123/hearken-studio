@@ -134,13 +134,15 @@ export const useDashboard = create<DashboardState>((set, get) => ({
   profile: null,
 
   init: async () => {
-    const [settings, translations, profile, live] = await Promise.all([
+    const [settings, translations, profile, live, info] = await Promise.all([
       api.getSettings(),
       api.listTranslations(),
       api.getHardwareProfile(),
       api.getOutputState(),
+      // Listening carries on if the dashboard reloads: pick the session back up.
+      api.pipelineInfo().catch(() => null),
     ]);
-    set({ settings, translations, profile, live });
+    set({ settings, translations, profile, live, ...(info ? { running: true, info } : {}) });
 
     const unlisteners = await Promise.all([
       events.transcript((t) => {

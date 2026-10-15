@@ -71,6 +71,7 @@ pub fn run() {
             commands::list_audio_devices,
             commands::start_pipeline,
             commands::stop_pipeline,
+            commands::pipeline_info,
             commands::list_translations,
             commands::search_scripture,
             commands::build_slide,

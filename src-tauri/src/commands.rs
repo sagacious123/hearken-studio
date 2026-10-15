@@ -130,8 +130,16 @@ pub async fn list_audio_devices() -> CmdResult<Vec<DeviceInfo>> {
 
 #[tauri::command]
 pub async fn start_pipeline(app: AppHandle, state: State<'_, AppState>) -> CmdResult<PipelineInfo> {
-    if state.pipeline.lock().is_some() {
-        return Err("already listening".into());
+    // Already listening (say the dashboard reloaded and lost track): carry on with it. A
+    // session whose audio stopped is cleared away and a new one started.
+    let existing = state.pipeline.lock().take();
+    if let Some(h) = existing {
+        if h.is_alive() {
+            let info = h.info.clone();
+            *state.pipeline.lock() = Some(h);
+            return Ok(info);
+        }
+        tauri::async_runtime::spawn_blocking(move || h.stop()).await.map_err(err)?;
     }
     let cached = state.hardware.lock().clone();
     let profile = match cached {
@@ -178,6 +186,13 @@ pub async fn start_pipeline(app: AppHandle, state: State<'_, AppState>) -> CmdRe
     let info = handle.info.clone();
     *state.pipeline.lock() = Some(handle);
     Ok(info)
+}
+
+/// The running session, if listening: the dashboard asks on load so a reload mid-service
+/// still shows Stop.
+#[tauri::command]
+pub fn pipeline_info(state: State<'_, AppState>) -> Option<PipelineInfo> {
+    state.pipeline.lock().as_ref().filter(|h| h.is_alive()).map(|h| h.info.clone())
 }
 
 #[tauri::command]

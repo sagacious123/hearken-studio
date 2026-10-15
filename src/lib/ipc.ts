@@ -318,6 +318,8 @@ export const api = {
   listAudioDevices: () => invoke<DeviceInfo[]>("list_audio_devices"),
   startPipeline: () => invoke<PipelineInfo>("start_pipeline"),
   stopPipeline: () => invoke<void>("stop_pipeline"),
+  /** The running session, if listening. */
+  pipelineInfo: () => invoke<PipelineInfo | null>("pipeline_info"),
   listTranslations: () => invoke<Translation[]>("list_translations"),
   listSystemFonts: () => invoke<string[]>("list_system_fonts"),
   openScreen: (n: number) => invoke<number[]>("open_screen", { n }),

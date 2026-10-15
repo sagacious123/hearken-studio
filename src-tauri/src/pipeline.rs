@@ -144,6 +144,11 @@ pub struct PipelineHandle {
 }
 
 impl PipelineHandle {
+    /// Still listening: the audio thread ends only when stopped or when capture fails.
+    pub fn is_alive(&self) -> bool {
+        self.threads.first().is_some_and(|t| !t.is_finished())
+    }
+
     pub fn stop(mut self) {
         self.stop.store(true, Relaxed);
         drop(self.capture.take());
