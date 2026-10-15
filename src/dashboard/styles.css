@@ -56,6 +56,18 @@ body {
   font-family: var(--font-ui);
   background: var(--color-zinc-950);
   overflow: hidden;
+  /* An app, not a page: clicking and dragging around shouldn't highlight text. */
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+/* Typing, and copying what was typed, still work in fields. */
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* Text on gold must be dark to be readable (components were written for darker accents). */
