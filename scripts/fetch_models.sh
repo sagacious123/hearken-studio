@@ -29,7 +29,9 @@ fetch "$HF/ggml-base.en-q5_1.bin" "$MODELS/ggml-base.en-q5_1.bin" 40000000
 # Pinned to one revision and checked, since it's run as code-like ONNX.
 YAMNET_REV="f25b741c2f0bdc6d7e6db24b5fddda23347dbafd"
 fetch "https://huggingface.co/audiomagic/yamnet-onnx/resolve/$YAMNET_REV/yamnet.onnx" "$MODELS/yamnet.onnx" 16000000
-echo "d3835ffbbd4a1bb3e777f0ca217b5007907f5171dd5d17c4236b95b2af8f908e  $MODELS/yamnet.onnx" | shasum -a 256 -c --quiet \
+# Git Bash on Windows has sha256sum but no shasum (and macOS's sha256sum lacks --quiet).
+sha256() { if command -v shasum >/dev/null; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }
+echo "d3835ffbbd4a1bb3e777f0ca217b5007907f5171dd5d17c4236b95b2af8f908e  $MODELS/yamnet.onnx" | sha256 -c --quiet \
   || { rm -f "$MODELS/yamnet.onnx"; echo "yamnet.onnx checksum mismatch" >&2; exit 1; }
 
 # 11 s, 16 kHz mono public-domain speech clip shipped with whisper.cpp.
