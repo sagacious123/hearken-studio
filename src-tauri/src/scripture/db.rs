@@ -187,12 +187,19 @@ impl BibleDb {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// FTS5 search over the bundled translations. `fts_query` must already be a safe FTS5
-    /// expression (see `user_query`). `translation = None` searches every bundled translation —
-    /// used by quote matching so that modern paraphrase can hit WEB while archaic phrasing hits
-    /// KJV. A downloaded translation searches the bundled ones (its words aren't indexed).
+    /// FTS5 search. `fts_query` must already be a safe FTS5 expression (see `user_query`).
+    /// `translation = None` searches every bundled translation — used by quote matching so that
+    /// modern paraphrase can hit WEB while archaic phrasing hits KJV. A downloaded translation
+    /// searches its own words, then the bundled translations if none of them are there.
     pub fn search(&self, translation: Option<&str>, fts_query: &str, limit: usize) -> Result<Vec<VerseHit>> {
-        let tid = translation.map(|t| self.translation_id(t)).transpose()?.filter(|&id| Self::schema(id) == "main");
+        let tid = translation.map(|t| self.translation_id(t)).transpose()?;
+        if let Some(id) = tid.filter(|&id| Self::schema(id) == "lib") {
+            let hits = self.search_library("v.translation_id = ?2", id, fts_query, limit)?;
+            if !hits.is_empty() {
+                return Ok(hits);
+            }
+        }
+        let tid = tid.filter(|&id| Self::schema(id) == "main");
         let mut stmt = self.conn.prepare_cached(
             "SELECT t.code, v.book_id, v.chapter, v.verse, v.text, bm25(verses_fts) AS rank
              FROM main.verses_fts
@@ -202,21 +209,41 @@ impl BibleDb {
              ORDER BY rank
              LIMIT ?3",
         )?;
-        let rows = stmt.query_map(params![fts_query, tid, limit as i64], |r| {
-            Ok(VerseHit {
-                translation: r.get(0)?,
-                reference: ScriptureRef {
-                    book_id: r.get(1)?,
-                    chapter: r.get(2)?,
-                    verse_start: Some(r.get(3)?),
-                    verse_end: None,
-                },
-                text: r.get(4)?,
-                rank: r.get(5)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![fts_query, tid, limit as i64], hit)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
+
+    /// FTS5 search over the downloaded translations in `language` ("French"), for verses quoted
+    /// aloud in that language.
+    pub fn search_language(&self, language: &str, fts_query: &str, limit: usize) -> Result<Vec<VerseHit>> {
+        self.search_library("t.language = ?2", language, fts_query, limit)
+    }
+
+    fn search_library(&self, filter: &str, value: impl rusqlite::ToSql, fts_query: &str, limit: usize) -> Result<Vec<VerseHit>> {
+        if !self.has_library {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT t.code, v.book_id, v.chapter, v.verse, v.text, bm25(verses_fts) AS rank
+             FROM lib.verses_fts
+             JOIN lib.verses v ON v.id = verses_fts.rowid
+             JOIN lib.translations t ON t.id = v.translation_id
+             WHERE verses_fts MATCH ?1 AND {filter}
+             ORDER BY rank
+             LIMIT ?3"
+        ))?;
+        let rows = stmt.query_map(params![fts_query, value, limit as i64], hit)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+}
+
+fn hit(r: &rusqlite::Row) -> rusqlite::Result<VerseHit> {
+    Ok(VerseHit {
+        translation: r.get(0)?,
+        reference: ScriptureRef { book_id: r.get(1)?, chapter: r.get(2)?, verse_start: Some(r.get(3)?), verse_end: None },
+        text: r.get(4)?,
+        rank: r.get(5)?,
+    })
 }
 
 /// Lowercase alphanumeric words; apostrophes dropped so "God's" → "gods".

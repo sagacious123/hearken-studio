@@ -5,14 +5,16 @@
 
 use std::{
     collections::HashMap,
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
+
+use parking_lot::Mutex;
 
 use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
 
-use super::{books, numbers, ScriptureRef, Versification};
+use super::{books, lang::Lang, numbers, ScriptureRef, Versification};
 
 /// How long "verse 18" / "chapter 5" may refer back to the last explicit reference.
 const CONTEXT_TTL: Duration = Duration::from_secs(180);
@@ -66,29 +68,46 @@ pub struct ParsedRef {
 }
 
 struct Patterns {
+    langs: Vec<Lang>,
     full: Regex,
     /// "<word> 4:13" where the word isn't a known book name; it may be a misheard one.
     fuzzy: Regex,
     verse_ctx: Regex,
     chapter_ctx: Regex,
     aliases: HashMap<String, (u8, bool)>,
+    /// Names to compare a word with when it might be a misheard book name.
+    spellings: Vec<books::Spelling>,
 }
 
 // "to" is often heard as "2" or "too" ("verse 10 2 12"); as a separator it needs spaces either side.
-const RANGE: &str = r"(?:(?:\s*(?P<rsep>-|to|through|thru|till|until|and)\s*|\s+(?:2|too)\s+)(?P<ve>\d{1,3}))?";
+// "verse" may be said again after it ("du verset 4 au verset 7").
+const RANGE: &str = r"(?:(?:\s*(?P<rsep>-|to|through|thru|till|until|and)\s*|\s+(?:2|too)\s+)(?:verses?\s+)?(?P<ve>\d{1,3}))?";
 // "-" between chapter and verse is Whisper writing "John 3-16" / "three-sixteen" for a spoken "John 3 16".
 const SEP: &str = r"(?P<sep>\s*:\s*|\s*-\s*|\s+(?:and\s+)?(?:verses?|vs|v)\s+|\s+)";
 /// Followed by numbers these are keywords or everyday speech ("hymn number 4 12"), never
 /// misheard book names. The real "Numbers 4:12" still matches exactly.
-const NOT_BOOKS: &[&str] = &["chapter", "chapters", "verse", "verses", "number"];
+const NOT_BOOKS: &[&str] = &["chapter", "chapters", "verse", "verses", "number", "numero", "himno", "page", "pagina"];
 /// Confidence cost of a book name recognised only by sound; keeps such hits out of auto-projection.
 const FUZZY_BOOK_PENALTY: f32 = 0.2;
 /// Confidence cost of a known mishearing ("Exodos"): nearly as sure as the real name.
 pub const MISHEARD_PENALTY: f32 = 0.05;
 
-static PATTERNS: LazyLock<Patterns> = LazyLock::new(|| {
+/// Patterns for each set of languages in use, built once (≈10 ms each).
+static PATTERNS: LazyLock<Mutex<HashMap<Vec<Lang>, Arc<Patterns>>>> = LazyLock::new(Default::default);
+
+fn patterns(langs: &[Lang]) -> Arc<Patterns> {
+    let mut key = langs.to_vec();
+    key.sort();
+    key.dedup();
+    if key.is_empty() {
+        key.push(Lang::En);
+    }
+    PATTERNS.lock().entry(key.clone()).or_insert_with(|| Arc::new(build_patterns(key))).clone()
+}
+
+fn build_patterns(langs: Vec<Lang>) -> Patterns {
     let mut aliases: HashMap<String, (u8, bool)> = HashMap::new();
-    for (alias, id, weak) in books::all_aliases() {
+    for (alias, id, weak) in books::aliases_for(&langs) {
         aliases.entry(alias).or_insert((id, weak));
     }
     let mut list: Vec<&String> = aliases.keys().collect();
@@ -107,17 +126,19 @@ static PATTERNS: LazyLock<Patterns> = LazyLock::new(|| {
         r"\bchapters?\s+(?P<ch>\d{{1,3}})(?:(?P<sep>\s*:\s*|\s+(?:and\s+)?(?:verses?|vs|v)\s+)(?P<vs>\d{{1,3}}){RANGE})?\b"
     );
     Patterns {
+        spellings: books::spellings(&langs),
+        langs,
         full: Regex::new(&full).expect("full reference regex"),
         fuzzy: Regex::new(&fuzzy).expect("fuzzy reference regex"),
         verse_ctx: Regex::new(&verse_ctx).expect("verse regex"),
         chapter_ctx: Regex::new(&chapter_ctx).expect("chapter regex"),
         aliases,
     }
-});
+}
 
-/// Forces regex compilation (≈10 ms) at startup instead of on the first transcript.
-pub fn warm_up() {
-    LazyLock::force(&PATTERNS);
+/// Builds the patterns for `langs` at startup instead of on the first transcript.
+pub fn warm_up(langs: &[Lang]) {
+    patterns(langs);
 }
 
 #[derive(Clone, Copy)]
@@ -136,21 +157,38 @@ enum Hit<'t> {
 }
 
 /// Stateful only for "verse 18"-style follow-ups; one instance per transcript stream.
-#[derive(Default)]
 pub struct ReferenceParser {
+    patterns: Arc<Patterns>,
     context: Option<Context>,
     /// Recent finished sentences, normalised, for references split across them.
     recent: Vec<(Instant, String)>,
 }
 
+impl Default for ReferenceParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReferenceParser {
+    /// English only.
     pub fn new() -> Self {
-        Self::default()
+        Self::for_languages(&[Lang::En])
+    }
+
+    /// References said in any of `langs` (book names, numbers and "chapter"/"verse" words).
+    pub fn for_languages(langs: &[Lang]) -> Self {
+        Self { patterns: patterns(langs), context: None, recent: Vec::new() }
+    }
+
+    /// For text the operator typed (search, the sermon plan): every language.
+    pub fn typed() -> Self {
+        Self::for_languages(&Lang::ALL)
     }
 
     pub fn parse(&mut self, raw: &str, is_final: bool, v11n: &Versification) -> Vec<ParsedRef> {
-        let p = &*PATTERNS;
-        let current = numbers::normalize(raw);
+        let p = self.patterns.clone();
+        let current = numbers::normalize_in(raw, &p.langs);
         // A reference split by a pause: read the end of the previous sentence with this one, and
         // keep only what reaches into this one (the rest was handled last time).
         let prefix = self.dangling_prefix(&p.aliases);
@@ -179,7 +217,7 @@ impl ReferenceParser {
                 continue;
             }
             let ordinal = c.name("ord").and_then(|o| books::ordinal_value(o.as_str()));
-            if let Some((book, edits)) = books::fuzzy_match(word, ordinal) {
+            if let Some((book, edits)) = books::fuzzy_match(word, ordinal, &p.spellings) {
                 fuzzy.push((m.range(), c, book, edits));
             }
         }
@@ -544,6 +582,89 @@ mod tests {
         let r = p.parse("and look at verse 13", true, &v);
         assert_eq!(r[0].reference, sr(50, 4, Some(13), None));
         assert_eq!(r[0].kind, RefKind::Contextual);
+    }
+
+    #[test]
+    fn french_references() {
+        let v = v11n();
+        let fr = |text: &str| ReferenceParser::for_languages(&[Lang::Fr]).parse(text, true, &v).into_iter().next().map(|r| (r.reference, r.confidence));
+        for (said, want) in [
+            ("Ouvrez vos Bibles à Jean 3:16", sr(43, 3, Some(16), None)),
+            ("Jean chapitre trois, verset seize", sr(43, 3, Some(16), None)),
+            ("Jean trois seize", sr(43, 3, Some(16), None)),
+            ("Romains huit, verset vingt-huit", sr(45, 8, Some(28), None)),
+            ("Première épître aux Corinthiens 13, versets 4 à 7", sr(46, 13, Some(4), Some(7))),
+            ("1 Corinthiens 13:4-7", sr(46, 13, Some(4), Some(7))),
+            ("Premier Jean quatre, huit", sr(62, 4, Some(8), None)),
+            ("Ésaïe 53, versets 4 et 5", sr(23, 53, Some(4), Some(5))),
+            ("Esaie 53 verset 5", sr(23, 53, Some(5), None)),
+            ("Isaïe 53:5", sr(23, 53, Some(5), None)),
+            ("Psaume cent dix-neuf, verset cent cinq", sr(19, 119, Some(105), None)),
+            ("Philippiens 4 verset 13", sr(50, 4, Some(13), None)),
+            ("Esther chapitre 3 du verset 10 au verset 12", sr(17, 3, Some(10), Some(12))),
+            ("Apocalypse 21, 4", sr(66, 21, Some(4), None)),
+        ] {
+            let got = fr(said).unwrap_or_else(|| panic!("no reference in {said:?}"));
+            assert_eq!(got.0, want, "{said}");
+            assert!(got.1 >= 0.9, "{said}: {}", got.1);
+        }
+        assert_eq!(fr("Psaume 23").map(|r| r.0), Some(sr(19, 23, None, None)));
+        // Names that are everyday words or first names need a verse to be sure.
+        assert!(fr("Marc 2:17").unwrap().1 >= 0.9);
+        assert!(fr("Marc 2 choses").unwrap().1 < 0.7);
+        for talk in ["Jean un jour est venu", "il est 3 heures", "le cantique numéro 4", "Pierre 3 fois", "nous avons 3 enfants"] {
+            let refs = ReferenceParser::for_languages(&[Lang::Fr]).parse(talk, true, &v);
+            assert!(refs.iter().all(|r| r.confidence < 0.7), "{talk}: {refs:?}");
+        }
+        // "verset 13" follows the chapter just named.
+        let mut p = ReferenceParser::for_languages(&[Lang::Fr]);
+        p.parse("Lisons Philippiens 4:6", true, &v);
+        let r = p.parse("et regardez le verset 13", true, &v);
+        assert_eq!(r[0].reference, sr(50, 4, Some(13), None));
+    }
+
+    #[test]
+    fn spanish_references() {
+        let v = v11n();
+        let es = |text: &str| ReferenceParser::for_languages(&[Lang::Es]).parse(text, true, &v).into_iter().next().map(|r| (r.reference, r.confidence));
+        for (said, want) in [
+            ("Abran sus Biblias en Juan 3:16", sr(43, 3, Some(16), None)),
+            ("Juan capítulo tres, versículo dieciséis", sr(43, 3, Some(16), None)),
+            ("San Juan 3 16", sr(43, 3, Some(16), None)),
+            ("Romanos ocho veintiocho", sr(45, 8, Some(28), None)),
+            ("Primera de Corintios trece, del cuatro al siete", sr(46, 13, Some(4), Some(7))),
+            ("Primera carta a los Corintios 13 versículos 4 al 7", sr(46, 13, Some(4), Some(7))),
+            ("1 Juan 4:8", sr(62, 4, Some(8), None)),
+            ("Isaías 53 versículos 4 y 5", sr(23, 53, Some(4), Some(5))),
+            ("Isaias 53:5", sr(23, 53, Some(5), None)),
+            ("Salmo ciento diecinueve, versículo ciento cinco", sr(19, 119, Some(105), None)),
+            ("Filipenses 4:13", sr(50, 4, Some(13), None)),
+            ("Ester capítulo 3 desde el versículo 10 hasta el 12", sr(17, 3, Some(10), Some(12))),
+            ("Mateo cinco, versículo tres", sr(40, 5, Some(3), None)),
+        ] {
+            let got = es(said).unwrap_or_else(|| panic!("no reference in {said:?}"));
+            assert_eq!(got.0, want, "{said}");
+            assert!(got.1 >= 0.85, "{said}: {}", got.1);
+        }
+        assert_eq!(es("Salmo 23").map(|r| r.0), Some(sr(19, 23, None, None)));
+        for talk in ["Juan una vez dijo", "Pedro 3 veces negó", "tenemos 3 hijos", "los hechos 3 y 4"] {
+            let refs = ReferenceParser::for_languages(&[Lang::Es]).parse(talk, true, &v);
+            assert!(refs.iter().all(|r| r.confidence < 0.7), "{talk}: {refs:?}");
+        }
+    }
+
+    #[test]
+    fn languages_together_and_typed() {
+        let v = v11n();
+        let mut p = ReferenceParser::for_languages(&[Lang::En, Lang::Fr]);
+        assert_eq!(p.parse("John 3:16", true, &v)[0].reference, sr(43, 3, Some(16), None));
+        assert_eq!(p.parse("et Romains 8:28", true, &v)[0].reference, sr(45, 8, Some(28), None));
+        // In an English sermon "Jean" is only a sound-alike of John: never sure enough to project.
+        assert!(ReferenceParser::new().parse("Jean 3:16", true, &v).iter().all(|r| r.confidence < 0.9));
+        // Typed text understands every language.
+        for typed in ["jean 3 16", "juan 3:16", "john 3 16", "Ésaïe 53:5"] {
+            assert!(!ReferenceParser::typed().parse(typed, true, &v).is_empty(), "{typed}");
+        }
     }
 
     #[test]

@@ -3,15 +3,16 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState};
 
-use crate::audio::SAMPLE_RATE;
+use crate::{audio::SAMPLE_RATE, scripture::lang::Lang};
 
 pub const GPU_BACKEND: &str = if cfg!(target_os = "macos") { "metal" } else { "vulkan" };
 
-/// Biases the decoder toward Bible vocabulary and toward writing references as
-/// "Book C:V" digits, which is far easier (and faster) to parse than spelled-out numbers.
-const DOMAIN_PROMPT: &str = "Sermon transcript with scripture references such as John 3:16, Romans 8:28, \
-1 Corinthians 13:4-7, Philippians 4:13, Psalm 23:1, Habakkuk 2:3, Ecclesiastes 3:1, Deuteronomy 31:6, \
-Exodus 14:14, Isaiah 40:31, Ezekiel 37:4, Galatians 5:22, Leviticus 19:18, Revelation 21:4.";
+/// Biases the decoder toward Bible vocabulary and toward writing references as "Book C:V"
+/// digits, which is far easier (and faster) to parse than spelled-out numbers. One sentence per
+/// preaching language, so none of them reads as a translation request.
+fn domain_prompt(langs: &[Lang]) -> String {
+    langs.iter().map(|l| l.prompt()).collect::<Vec<_>>().join(" ")
+}
 
 /// Whisper keeps only the last ~224 prompt tokens; this keeps us comfortably inside that.
 const MAX_PROMPT_CHARS: usize = 820;
@@ -29,19 +30,20 @@ fn vocabulary(words: &str) -> String {
 
 /// Prompt for the live (fast) decodes: short, because every prompt token costs time on each
 /// partial. The operator's own vocabulary goes last, where Whisper weighs it most.
-pub fn live_prompt(vocab: &str) -> String {
+pub fn live_prompt(vocab: &str, langs: &[Lang]) -> String {
     match vocabulary(vocab) {
-        v if v.is_empty() => DOMAIN_PROMPT.to_owned(),
-        v => format!("{DOMAIN_PROMPT} {v}."),
+        v if v.is_empty() => domain_prompt(langs),
+        v => format!("{} {v}.", domain_prompt(langs)),
     }
 }
 
-/// Prompt for the accuracy pass: every book name (so "Philippians" isn't heard as
-/// "Philippines"), today's planned passages, then the operator's vocabulary.
-pub fn accurate_prompt(vocab: &str, planned: &[String], books: &[&str]) -> String {
-    let mut parts = vec![format!("Sermon transcript. Books of the Bible: {}.", books.join(", "))];
+/// Prompt for the accuracy pass: every book name in each language (so "Philippians" isn't
+/// heard as "Philippines"), today's planned passages, then the operator's vocabulary.
+pub fn accurate_prompt(vocab: &str, planned: &[String], langs: &[Lang]) -> String {
+    let mut parts: Vec<String> = langs.iter().map(|l| format!("{} {}.", l.books_heading(), l.book_names().join(", "))).collect();
     if !planned.is_empty() {
-        parts.push(format!("Today's readings: {}.", planned.iter().take(12).cloned().collect::<Vec<_>>().join(", ")));
+        let heading = langs.first().unwrap_or(&Lang::En).readings_heading();
+        parts.push(format!("{heading} {}.", planned.iter().take(12).cloned().collect::<Vec<_>>().join(", ")));
     }
     let v = vocabulary(vocab);
     if !v.is_empty() {
@@ -56,9 +58,6 @@ pub fn accurate_prompt(vocab: &str, planned: &[String], books: &[&str]) -> Strin
     }
     prompt
 }
-
-/// Common Whisper hallucinations on silence, music or applause.
-const HALLUCINATIONS: &[&str] = &["thank you.", "thank you", "thanks for watching!", "thank you for watching.", "you", "bye.", "."];
 
 /// Resolve a model id (`tiny.en`, `base.en`, …) to a file in `models_dir`.
 pub fn model_path(models_dir: &Path, model: &str) -> Option<PathBuf> {
@@ -93,6 +92,10 @@ pub struct Transcript {
     pub text: String,
     /// Mean token probability, 0..1.
     pub confidence: f32,
+    /// The language it was heard in, when listening for more than one.
+    pub language: Option<Lang>,
+    /// Heard as a language that isn't being listened for.
+    stray: bool,
 }
 
 pub struct WhisperEngine {
@@ -100,6 +103,12 @@ pub struct WhisperEngine {
     state: WhisperState,
     threads: i32,
     backend: &'static str,
+    /// The preaching languages. One is decoded as that language; several are told apart by
+    /// the model, sentence by sentence.
+    languages: Vec<Lang>,
+    /// The language of the last finished sentence. Partials are decoded in it: telling
+    /// languages apart costs a second encoder pass, too slow for every partial.
+    last_heard: Option<Lang>,
 }
 
 impl WhisperEngine {
@@ -111,7 +120,7 @@ impl WhisperEngine {
         let ctx = WhisperContext::new_with_params(path_str, params)
             .map_err(|e| anyhow!("loading {}: {e:?}", path.display()))?;
         let state = ctx.create_state().map_err(|e| anyhow!("creating whisper state: {e:?}"))?;
-        Ok(Self { _ctx: ctx, state, threads: threads as i32, backend: if gpu { GPU_BACKEND } else { "cpu" } })
+        Ok(Self { _ctx: ctx, state, threads: threads as i32, backend: if gpu { GPU_BACKEND } else { "cpu" }, languages: vec![Lang::En], last_heard: None })
     }
 
     /// GPU first, CPU on failure (missing Vulkan driver, unsupported Metal family, …).
@@ -129,7 +138,34 @@ impl WhisperEngine {
         self.backend
     }
 
+    /// Listen for `langs` (needs a multilingual model unless it's only English).
+    pub fn set_languages(&mut self, langs: &[Lang]) {
+        if !langs.is_empty() {
+            self.languages = langs.to_vec();
+        }
+    }
+
+    /// Decode `audio`. With several languages the model picks one for each finished sentence
+    /// (one it hears as some other language, which an accent can do, is decoded again as the
+    /// first); partials keep the language of the sentence before.
     pub fn transcribe(&mut self, audio: &[f32], opts: DecodeOptions, prompt: &str) -> Result<Transcript> {
+        let langs = self.languages.clone();
+        let forced = match langs.as_slice() {
+            [only] => Some(*only),
+            _ if opts.partial => Some(self.last_heard.unwrap_or(langs[0])),
+            _ => None,
+        };
+        let mut t = self.decode(audio, opts, prompt, forced)?;
+        if t.stray && !opts.partial {
+            t = self.decode(audio, opts, prompt, Some(langs[0]))?;
+        }
+        if !opts.partial && t.language.is_some() {
+            self.last_heard = t.language;
+        }
+        Ok(t)
+    }
+
+    fn decode(&mut self, audio: &[f32], opts: DecodeOptions, prompt: &str, language: Option<Lang>) -> Result<Transcript> {
         // whisper.cpp rejects < 1 s of audio; pad with silence.
         let min_len = SAMPLE_RATE * 1100 / 1000;
         let padded;
@@ -149,7 +185,7 @@ impl WhisperEngine {
         };
         let mut params = FullParams::new(strategy);
         params.set_n_threads(self.threads);
-        params.set_language(Some("en"));
+        params.set_language(Some(language.map_or("auto", Lang::code)));
         params.set_translate(false);
         params.set_no_context(true);
         params.set_single_segment(opts.partial);
@@ -162,7 +198,13 @@ impl WhisperEngine {
         // Temperature fallback re-decodes on low confidence — great for accuracy, terrible for
         // latency spikes. Only allow it on finals.
         params.set_temperature_inc(if opts.partial { 0.0 } else { 0.2 });
-        params.set_initial_prompt(if prompt.is_empty() { DOMAIN_PROMPT } else { prompt });
+        let default_prompt;
+        params.set_initial_prompt(if prompt.is_empty() {
+            default_prompt = domain_prompt(&self.languages);
+            &default_prompt
+        } else {
+            prompt
+        });
         if opts.partial {
             params.set_max_tokens(64);
         }
@@ -197,10 +239,18 @@ impl WhisperEngine {
         }
         let confidence = if prob_n == 0 { 0.0 } else { prob_sum / prob_n as f32 };
         let mut text = strip_annotations(&text);
-        if confidence < 0.6 && HALLUCINATIONS.contains(&text.to_lowercase().as_str()) {
+        let lower = text.to_lowercase();
+        if confidence < 0.6 && self.languages.iter().any(|l| l.hallucinations().contains(&lower.as_str())) {
             text.clear();
         }
-        Ok(Transcript { text, confidence })
+        let heard = match language {
+            Some(l) => Ok(l),
+            None => match self.state.full_lang_id_from_state().ok().and_then(whisper_rs::get_lang_str) {
+                Some(code) => Lang::from_code(code).filter(|l| self.languages.contains(l)).ok_or(code),
+                None => Err("?"),
+            },
+        };
+        Ok(Transcript { text, confidence, language: heard.ok(), stray: heard.is_err_and(|code| code != "?") })
     }
 }
 
@@ -225,15 +275,47 @@ mod tests {
 
     #[test]
     fn prompts_carry_vocabulary_and_stay_short() {
-        assert_eq!(live_prompt("  "), DOMAIN_PROMPT);
-        assert!(live_prompt("Pastor Adeyemi,\nEbenezer ; Ikeja").ends_with("Pastor Adeyemi, Ebenezer, Ikeja."));
-        let books: Vec<&str> = crate::scripture::books::BOOKS.iter().map(|b| b.display).collect();
-        let p = accurate_prompt("Pastor Adeyemi", &["Romans 8:28".into()], &books);
+        let en = [Lang::En];
+        assert_eq!(live_prompt("  ", &en), Lang::En.prompt());
+        assert!(live_prompt("Pastor Adeyemi,\nEbenezer ; Ikeja", &en).ends_with("Pastor Adeyemi, Ebenezer, Ikeja."));
+        let p = accurate_prompt("Pastor Adeyemi", &["Romans 8:28".into()], &en);
         assert!(p.len() <= MAX_PROMPT_CHARS, "{}", p.len());
         assert!(p.ends_with("Today's readings: Romans 8:28. Pastor Adeyemi."), "{p}");
         assert!(p.contains("Philippians"));
+        // In French: the books' French names, and the end (readings, vocabulary) kept when cut.
+        let p = accurate_prompt("Pasteur Kouassi", &["Jean 3:16".into()], &[Lang::Fr]);
+        assert!(p.starts_with("Prédication. Livres de la Bible : Genèse, Exode"), "{p}");
+        assert!(p.ends_with("Lectures du jour : Jean 3:16. Pasteur Kouassi."), "{p}");
+        let p = accurate_prompt("", &[], &[Lang::En, Lang::Es]);
+        assert!(p.len() <= MAX_PROMPT_CHARS && p.contains("Apocalipsis"), "{p}");
+        assert!(live_prompt("", &[Lang::En, Lang::Fr]).contains("Romains 8:28"));
         let long = "word, ".repeat(200);
         assert!(vocabulary(&long).len() <= MAX_VOCAB_CHARS);
+    }
+
+    /// Transcribe 16 kHz mono WAVs in some languages and show what the detector makes of them:
+    /// `HEARKEN_MODEL=…/ggml-base-q5_1.bin HEARKEN_LANGS=fr HEARKEN_WAV=a.wav,b.wav cargo test transcribe_files -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs a model and recordings"]
+    fn transcribe_files() {
+        use crate::scripture::{parser::ReferenceParser, BibleDb};
+        let model = std::env::var("HEARKEN_MODEL").expect("HEARKEN_MODEL");
+        let codes: Vec<String> = std::env::var("HEARKEN_LANGS").unwrap_or_else(|_| "en".into()).split(',').map(String::from).collect();
+        let langs = Lang::list(&codes);
+        let threads = super::super::hardware::Specs::detect().recommended_threads();
+        let mut engine = WhisperEngine::load(Path::new(&model), false, threads).unwrap();
+        engine.set_languages(&langs);
+        let v11n = BibleDb::open(&Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/bible.db")).unwrap().versification().unwrap();
+        let mut parser = ReferenceParser::for_languages(&langs);
+        for wav in std::env::var("HEARKEN_WAV").expect("HEARKEN_WAV").split(',') {
+            let audio = super::super::hardware::load_wav(Path::new(wav)).unwrap();
+            let t0 = std::time::Instant::now();
+            let out = engine.transcribe(&audio, DecodeOptions::live(false, true), &live_prompt("", &langs)).unwrap();
+            eprintln!("{wav}: {:.0} ms, heard as {:?} ({:.2}): {}", t0.elapsed().as_secs_f32() * 1000.0, out.language, out.confidence, out.text);
+            let refs: Vec<_> = parser.parse(&out.text, true, &v11n).into_iter().map(|r| (r.reference.label(), (r.confidence * 100.0).round())).collect();
+            eprintln!("  references: {refs:?}");
+            eprintln!("  command: {:?}", crate::voice::parse_in(&out.text, &langs));
+        }
     }
 
     #[test]

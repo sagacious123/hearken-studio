@@ -1,7 +1,8 @@
 //! Whisper model catalogue. `tiny.en` and `base.en` ship in the installer (fast, live updates);
-//! the larger, more accurate models used for the accuracy pass are downloaded on demand into
-//! the app's data folder, so the installer stays small. Downloads resume after interruption
-//! and are checked against the published SHA-256 before use.
+//! the larger, more accurate models used for the accuracy pass, and the multilingual ones for
+//! preaching in other languages, are downloaded on demand into the app's data folder, so the
+//! installer stays small. Downloads resume after interruption and are checked against the
+//! published SHA-256 before use.
 
 use std::{
     fs,
@@ -13,6 +14,8 @@ use std::{
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+
+use crate::scripture::lang::Lang;
 
 const BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 
@@ -51,6 +54,26 @@ pub const CATALOG: &[ModelInfo] = &[
         note: "Live updates on most computers.",
     },
     ModelInfo {
+        id: "tiny",
+        label: "Tiny (all languages)",
+        file: "ggml-tiny-q5_1.bin",
+        bytes: 32_152_673,
+        sha256: "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7",
+        bundled: false,
+        accuracy: false,
+        note: "Live updates in other languages on slow computers.",
+    },
+    ModelInfo {
+        id: "base",
+        label: "Base (all languages)",
+        file: "ggml-base-q5_1.bin",
+        bytes: 59_707_625,
+        sha256: "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+        bundled: false,
+        accuracy: false,
+        note: "Live updates in other languages, such as French and Spanish.",
+    },
+    ModelInfo {
         id: "small.en",
         label: "Small (English)",
         file: "ggml-small.en-q5_1.bin",
@@ -59,6 +82,16 @@ pub const CATALOG: &[ModelInfo] = &[
         bundled: false,
         accuracy: true,
         note: "Clearly more accurate than Base. Fast enough on any recent computer.",
+    },
+    ModelInfo {
+        id: "small",
+        label: "Small (all languages)",
+        file: "ggml-small-q5_1.bin",
+        bytes: 190_085_487,
+        sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+        bundled: false,
+        accuracy: true,
+        note: "Small for sermons in other languages. Fast enough on any recent computer.",
     },
     ModelInfo {
         id: "large-v3-turbo",
@@ -74,6 +107,25 @@ pub const CATALOG: &[ModelInfo] = &[
 
 pub fn info(id: &str) -> Option<&'static ModelInfo> {
     CATALOG.iter().find(|m| m.id == id)
+}
+
+/// Whether `langs` need a multilingual model (English-only models are faster and better in English).
+pub fn needs_multilingual(langs: &[Lang]) -> bool {
+    langs.iter().any(|l| *l != Lang::En)
+}
+
+/// The model to use for `langs` in place of `id`: the multilingual one of the same size when a
+/// language other than English is preached ("base.en" → "base").
+pub fn for_languages(id: &str, langs: &[Lang]) -> &'static str {
+    let wanted = if needs_multilingual(langs) { id.strip_suffix(".en").unwrap_or(id) } else { id };
+    info(wanted).map(|m| m.id).unwrap_or(if needs_multilingual(langs) { "base" } else { "base.en" })
+}
+
+/// Live models that can listen for `langs`, the one sized for this computer (`benchmarked`) first.
+pub fn live_choices(benchmarked: &str, langs: &[Lang]) -> Vec<&'static str> {
+    let first = for_languages(benchmarked, langs);
+    let others: &[&str] = if needs_multilingual(langs) { &["base", "tiny"] } else { &["base.en", "tiny.en"] };
+    std::iter::once(first).chain(others.iter().copied().filter(|m| *m != first)).collect()
 }
 
 /// The file for `id` in any of `dirs` (bundled resources first, then downloads).
@@ -220,6 +272,19 @@ mod tests {
         delete("large-v3-turbo", &downloads).unwrap();
         assert!(find(&dirs, "large-v3-turbo").is_none());
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn other_languages_use_multilingual_models() {
+        let (en, fr) = ([Lang::En], [Lang::En, Lang::Fr]);
+        assert_eq!(for_languages("base.en", &en), "base.en");
+        assert_eq!(for_languages("base.en", &fr), "base");
+        assert_eq!(for_languages("tiny.en", &[Lang::Es]), "tiny");
+        assert_eq!(for_languages("small.en", &fr), "small");
+        assert_eq!(for_languages("large-v3-turbo", &fr), "large-v3-turbo");
+        assert_eq!(live_choices("tiny.en", &fr), ["tiny", "base"]);
+        assert_eq!(live_choices("base.en", &en), ["base.en", "tiny.en"]);
+        assert!(CATALOG.iter().filter(|m| !m.bundled).all(|m| m.sha256.len() == 64), "downloads are checked");
     }
 
     #[test]

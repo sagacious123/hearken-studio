@@ -8,6 +8,7 @@ use crate::{
     presentation::OutputState,
     scripture::{
         build_slide,
+        lang::Lang,
         quote::{self, Fit, Passage, Spoken},
         BibleDb, ScriptureRef, Slide, Versification,
     },
@@ -59,8 +60,17 @@ pub struct Follower {
     last_advance: Option<Instant>,
 }
 
+/// The language a slide is read in: its translation's (songs are matched as they are written).
+fn language(slide: &Slide) -> Lang {
+    if slide.is_song() {
+        Lang::En
+    } else {
+        Lang::of_translation(&slide.translation)
+    }
+}
+
 fn passage(slide: &Slide) -> Passage {
-    Passage::new(&slide.verses.iter().map(|v| v.text.as_str()).collect::<Vec<_>>())
+    Passage::in_lang(&slide.verses.iter().map(|v| v.text.as_str()).collect::<Vec<_>>(), language(slide))
 }
 
 impl Follower {
@@ -101,7 +111,7 @@ impl Follower {
         if self.slide_id.as_deref() != Some(slide.id.as_str()) {
             self.load(slide, ctx);
         }
-        let spoken = Spoken::new(text, TAIL_WORDS);
+        let spoken = Spoken::in_lang(text, TAIL_WORDS, language(slide));
         if spoken.len() < 3 {
             return Action::None;
         }
@@ -179,7 +189,7 @@ impl LyricsIndex {
         self.sections = songs
             .iter()
             .enumerate()
-            .flat_map(|(si, song)| song.sections.iter().enumerate().map(move |(xi, sec)| (si, xi, Passage::new(&sec.lines))))
+            .flat_map(|(si, song)| song.sections.iter().enumerate().map(move |(xi, sec)| (si, xi, Passage::in_lang(&sec.lines, Lang::En))))
             .collect();
         self.songs = songs;
         self.version = version;
@@ -191,7 +201,7 @@ impl LyricsIndex {
 
     /// The song section being sung, if the latest words match one well.
     pub fn detect(&self, text: &str) -> Option<SongMatch> {
-        let spoken = Spoken::new(text, SONG_TAIL_WORDS);
+        let spoken = Spoken::in_lang(text, SONG_TAIL_WORDS, Lang::En);
         let mut best: Option<(f32, usize, usize, Fit)> = None;
         for (si, xi, p) in &self.sections {
             let Some(f) = quote::fit(&spoken, p) else { continue };

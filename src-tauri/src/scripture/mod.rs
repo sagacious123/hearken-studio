@@ -1,6 +1,7 @@
 pub mod books;
 pub mod db;
 pub mod fuzzy;
+pub mod lang;
 pub mod library;
 pub mod meaning;
 pub mod numbers;

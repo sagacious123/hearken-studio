@@ -84,6 +84,8 @@ pub fn run() {
             commands::sign_out,
             commands::forgot_password,
             commands::list_translations,
+            commands::list_languages,
+            commands::language_setup,
             commands::search_scripture,
             commands::build_slide,
             commands::list_books,

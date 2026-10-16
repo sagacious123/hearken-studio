@@ -2,16 +2,21 @@
 //! sentences that carry the sermon's main ideas (ranked TextRank-style by how much they share
 //! with the rest of the sermon), grouped under the scriptures that were on screen at the time,
 //! plus the sermon's recurring themes. Small talk ("you may be seated") and verses read aloud
-//! (already in the recap's scripture list) are left out.
+//! (already in the recap's scripture list) are left out. Works in each preaching language: the
+//! sermon's language is told from its little words.
 
 use std::collections::{HashMap, HashSet};
 
-use rust_stemmers::{Algorithm, Stemmer};
+use rust_stemmers::Stemmer;
 use serde::Serialize;
 
 use crate::{
     history::{time_of, Entry},
-    scripture::{books, ScriptureRef},
+    scripture::{
+        books,
+        lang::{self, fold, Lang},
+        ScriptureRef,
+    },
 };
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -101,10 +106,99 @@ fn repetitive(text: &str) -> bool {
     all.len() >= 6 && unique.len() * 2 < all.len()
 }
 
-/// Bible book names say where a point came from, not what it's about.
-fn is_book_name(word: &str) -> bool {
-    books::BOOKS.iter().any(|b| b.aliases.contains(&word) || b.name.eq_ignore_ascii_case(word))
+const FR_STOPWORDS: &[&str] = &[
+    "alors", "donc", "voila", "euh", "hein", "bon", "ben", "quoi", "vraiment", "toujours", "jamais", "encore", "deja",
+    "ici", "maintenant", "aujourdhui", "chose", "choses", "quelque", "quelquun", "rien", "personne", "faire", "dire",
+    "aller", "va", "vais", "allons", "allez", "venir", "vient", "voir", "vu", "prendre", "donner", "peut", "peuvent",
+    "pouvez", "veux", "veut", "voulez", "dois", "doit", "devez", "faut", "sais", "savez", "crois", "pense", "eglise",
+    "frere", "freres", "soeur", "soeurs", "pasteur", "merci", "bonjour", "alleluia", "gloire", "chapitre", "verset",
+    "bible", "lire", "lisons", "ouvrez", "jour", "semaine", "fois", "temps", "beaucoup", "peu", "trop", "comment",
+    "pourquoi", "quand", "parce", "puis", "apres", "avant", "entre", "vers", "chez", "depuis", "pendant", "sous",
+    "moi", "toi", "eux", "celui", "celle", "ceux", "ceci", "quel", "quelle", "dont", "meme", "autre", "autres",
+    "chaque", "ainsi", "moins", "premier", "deux", "trois", "etes", "suis", "sommes", "avait", "aura", "sera",
+];
+const ES_STOPWORDS: &[&str] = &[
+    "bueno", "entonces", "pues", "ahora", "aqui", "alli", "hoy", "cosa", "cosas", "algo", "alguien", "nada", "nadie",
+    "hacer", "hace", "decir", "digo", "dicen", "ir", "voy", "vamos", "van", "venir", "ver", "dar", "puede", "pueden",
+    "puedes", "quiero", "quiere", "debe", "debemos", "tiene", "tienen", "tengo", "sabe", "saben", "creo", "pienso",
+    "iglesia", "hermano", "hermanos", "hermana", "hermanas", "pastor", "gracias", "aleluya", "gloria", "capitulo",
+    "versiculo", "biblia", "leer", "leamos", "abran", "dia", "semana", "vez", "veces", "tiempo", "mucho", "muchos",
+    "poco", "siempre", "nunca", "otra", "otro", "otros", "cada", "mismo", "cual", "cuales", "estan", "estamos",
+    "somos", "eres", "estoy", "soy", "fue", "sea", "primero", "dos", "tres", "despues", "antes", "entre", "hasta",
+];
+
+/// A language's words for the notes: the ones to skip, and those that mark points and small talk.
+struct Vocab {
+    lang: Lang,
+    stemmer: Stemmer,
+    stopwords: HashSet<&'static str>,
+    /// Common in every sermon, so never a theme on their own.
+    not_themes: &'static [&'static str],
+    /// Phrases that announce a point worth writing down.
+    cues: &'static [&'static str],
+    /// Pulpit housekeeping, never a sermon point.
+    small_talk: &'static [&'static str],
+    /// Bible book names say where a point came from, not what it's about.
+    books: HashSet<String>,
 }
+
+impl Vocab {
+    fn new(lang: Lang) -> Self {
+        let (extra, not_themes, cues, small_talk): (&[&str], &[&str], &[&str], &[&str]) = match lang {
+            Lang::En => (STOPWORDS, NOT_THEMES, CUES, SMALL_TALK),
+            Lang::Fr => (FR_STOPWORDS, FR_NOT_THEMES, FR_CUES, FR_SMALL_TALK),
+            Lang::Es => (ES_STOPWORDS, ES_NOT_THEMES, ES_CUES, ES_SMALL_TALK),
+        };
+        let mut books: HashSet<String> = books::spellings(&[Lang::En, lang]).into_iter().map(|s| s.text.to_owned()).collect();
+        books.extend(books::BOOKS.iter().map(|b| b.name.to_lowercase()));
+        Self {
+            lang,
+            stemmer: Stemmer::create(lang.stemmer()),
+            stopwords: lang.stopwords().iter().chain(extra).copied().collect(),
+            not_themes,
+            cues,
+            small_talk,
+            books,
+        }
+    }
+
+    fn stem(&self, word: &str) -> String {
+        self.stemmer.stem(&fold(word)).into_owned()
+    }
+
+    fn is_book_name(&self, word: &str) -> bool {
+        self.books.contains(&fold(word))
+    }
+
+    /// The book's name in the sermon's language.
+    fn book(&self, id: u8) -> String {
+        match self.lang {
+            Lang::En => books::by_id(id).map_or("?", |b| b.name).to_owned(),
+            other => other.book_names().get(id as usize - 1).cloned().unwrap_or_else(|| "?".into()),
+        }
+    }
+}
+
+const FR_NOT_THEMES: &[&str] = &["dieu", "seigneur", "jesus", "christ", "pere", "gens", "homme", "hommes", "vie", "parole", "bon", "bonne", "grand", "grande", "petit", "nouveau", "vieux", "place", "main", "coeur"];
+const FR_CUES: &[&str] = &[
+    "le point", "mon point", "retenez", "souvenez-vous", "je veux que vous", "la verite", "la lecon", "la cle", "premierement",
+    "deuxiemement", "troisiemement", "enfin", "en conclusion", "la bible dit", "dieu veut", "la parole dit", "vous devez",
+    "nous devons", "noubliez jamais", "le secret", "le message", "cela veut dire", "la raison", "comprenez que",
+];
+const FR_SMALL_TALK: &[&str] = &[
+    "bonjour", "bonsoir", "asseyez-vous", "votre voisin", "ton voisin", "dites amen", "quelquun dit", "applaudi", "offrande",
+    "annonce", "prions", "inclinez", "fermez les yeux", "levez-vous", "debout", "bienvenue", "micro",
+];
+const ES_NOT_THEMES: &[&str] = &["dios", "senor", "jesus", "cristo", "padre", "gente", "hombre", "hombres", "vida", "palabra", "bueno", "buena", "grande", "pequeno", "nuevo", "viejo", "lugar", "mano", "corazon"];
+const ES_CUES: &[&str] = &[
+    "el punto", "mi punto", "recuerden", "quiero que", "la verdad es", "la leccion", "la clave", "primero", "segundo",
+    "tercero", "finalmente", "en conclusion", "la biblia dice", "dios quiere", "la palabra dice", "debemos", "nunca olviden",
+    "el secreto", "el mensaje", "esto significa", "la razon", "entiendan que",
+];
+const ES_SMALL_TALK: &[&str] = &[
+    "buenos dias", "buenas tardes", "buenas noches", "sientense", "a tu hermano", "a su vecino", "digan amen", "alguien diga",
+    "aplau", "ofrenda", "anuncio", "oremos", "inclinen", "cierren los ojos", "pongase de pie", "de pie", "bienvenid", "microfono",
+];
 
 /// Average TextRank score below which the transcript is treated as noise (see `notes_from`).
 const MIN_COHERENCE: f32 = 0.6;
@@ -125,16 +219,19 @@ fn words(text: &str) -> impl Iterator<Item = String> + '_ {
         .filter(|w| !w.is_empty())
 }
 
-fn content_stems(stemmer: &Stemmer, text: &str) -> Vec<(String, String)> {
+/// (stem, word as said) for the words that carry meaning. In French and Spanish an elided
+/// article is a word of its own ("l'amour" → "amour").
+fn content_stems(v: &Vocab, text: &str) -> Vec<(String, String)> {
     words(text)
-        .filter(|w| w.len() > 2 && !STOPWORDS.contains(&w.as_str()) && !w.chars().all(|c| c.is_ascii_digit()))
-        .map(|w| (stemmer.stem(&w).into_owned(), w))
+        .map(|w| if v.lang == Lang::En { w } else { w.rsplit('\'').next().unwrap_or_default().to_owned() })
+        .filter(|w| w.chars().count() > 2 && !v.stopwords.contains(fold(w).as_str()) && !w.chars().all(|c| c.is_ascii_digit()))
+        .map(|w| (v.stem(&w), w))
         .collect()
 }
 
 /// Transcript lines into sentences. Lines often end mid-sentence, so text is carried over until
 /// a full stop, a long pause or a runaway length ends it.
-fn sentences(stemmer: &Stemmer, said: &[(i64, &str)]) -> Vec<Sentence> {
+fn sentences(v: &Vocab, said: &[(i64, &str)]) -> Vec<Sentence> {
     const PAUSE_MS: i64 = 8_000;
     const MAX_WORDS: usize = 60;
     let mut out = Vec::new();
@@ -147,7 +244,7 @@ fn sentences(stemmer: &Stemmer, said: &[(i64, &str)]) -> Vec<Sentence> {
         if text.is_empty() {
             return;
         }
-        let stems = content_stems(stemmer, &text).into_iter().map(|(s, _)| s).collect();
+        let stems = content_stems(v, &text).into_iter().map(|(s, _)| s).collect();
         out.push(Sentence { at: start, words: text.split_whitespace().count(), text, stems });
     };
     for &(at, line) in said {
@@ -243,9 +340,9 @@ struct Shown {
 }
 
 /// "John 3:16", or "John 3:16–18" for a run of verses in one chapter.
-fn heading(run: &[&Shown]) -> String {
+fn heading(v: &Vocab, run: &[&Shown]) -> String {
     let first = &run[0].reference;
-    let book = books::by_id(first.book_id).map_or("?", |b| b.name);
+    let book = v.book(first.book_id);
     let start = run.iter().filter_map(|s| s.reference.verse_start).min();
     let end = run.iter().filter_map(|s| s.reference.verse_end.or(s.reference.verse_start)).max();
     match (start, end) {
@@ -256,7 +353,16 @@ fn heading(run: &[&Shown]) -> String {
 }
 
 pub fn notes_from(entries: &[Entry]) -> SermonNotes {
-    let stemmer = Stemmer::create(Algorithm::English);
+    let sample: String = entries
+        .iter()
+        .filter_map(|e| match e {
+            Entry::Said { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .take(200)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let v = Vocab::new(lang::guess(&sample));
     // While a song is on screen the transcript is singing; it runs until the next slide (at
     // most ten minutes).
     let mut singing: Vec<(i64, i64)> = Vec::new();
@@ -286,13 +392,13 @@ pub fn notes_from(entries: &[Entry]) -> SermonNotes {
         .iter()
         .filter_map(|e| match e {
             Entry::Shown { at, reference: Some(r), song: None, text, .. } => {
-                Some(Shown { at: *at, reference: r.clone(), stems: content_stems(&stemmer, text).into_iter().map(|(s, _)| s).collect() })
+                Some(Shown { at: *at, reference: r.clone(), stems: content_stems(&v, text).into_iter().map(|(s, _)| s).collect() })
             }
             _ => None,
         })
         .collect();
 
-    let sentences = sentences(&stemmer, &said);
+    let sentences = sentences(&v, &said);
     if sentences.len() < 3 {
         return SermonNotes::default();
     }
@@ -300,8 +406,8 @@ pub fn notes_from(entries: &[Entry]) -> SermonNotes {
     // Themes: the content words the preacher keeps coming back to.
     let mut counts: HashMap<String, (usize, HashMap<String, usize>)> = HashMap::new();
     for (_, line) in &said {
-        for (stem, word) in content_stems(&stemmer, line) {
-            if NOT_THEMES.contains(&word.as_str()) || word.len() < 4 || word.contains('\'') || is_book_name(&word) {
+        for (stem, word) in content_stems(&v, line) {
+            if v.not_themes.contains(&fold(&word).as_str()) || word.chars().count() < 4 || word.contains('\'') || v.is_book_name(&word) {
                 continue;
             }
             let e = counts.entry(stem).or_default();
@@ -316,7 +422,7 @@ pub fn notes_from(entries: &[Entry]) -> SermonNotes {
         .collect();
     themes.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     let themes: Vec<String> = themes.into_iter().take(6).map(|(_, w)| w).collect();
-    let theme_stems: HashSet<String> = themes.iter().map(|w| stemmer.stem(w).into_owned()).collect();
+    let theme_stems: HashSet<String> = themes.iter().map(|w| v.stem(w)).collect();
 
     // Candidates: sermon-length sentences that aren't small talk or a verse being read out.
     let scores = rank(&sentences);
@@ -329,17 +435,17 @@ pub fn notes_from(entries: &[Entry]) -> SermonNotes {
         .iter()
         .enumerate()
         .filter(|(_, s)| {
-            let lower = s.text.to_lowercase();
+            let lower = fold(&s.text);
             (9..=45).contains(&s.words)
                 && s.stems.len() >= 4
                 && (theme_stems.is_empty() || s.stems.iter().any(|w| theme_stems.contains(w)))
                 && !repetitive(&s.text)
-                && !SMALL_TALK.iter().any(|p| lower.contains(p))
+                && !v.small_talk.iter().any(|p| lower.contains(p))
                 && !reading(s)
         })
         .map(|(i, s)| {
-            let lower = s.text.to_lowercase();
-            let cue = if CUES.iter().any(|c| lower.contains(c)) { 1.35 } else { 1.0 };
+            let lower = fold(&s.text);
+            let cue = if v.cues.iter().any(|c| lower.contains(c)) { 1.35 } else { 1.0 };
             let themed = 1.0 + 0.08 * s.stems.intersection(&theme_stems).count().min(3) as f32;
             (scores[i] * cue * themed, i)
         })
@@ -381,7 +487,7 @@ pub fn notes_from(entries: &[Entry]) -> SermonNotes {
         sections.push((i64::MIN, NoteSection { heading: None, time: time_of(sentences[0].at), points: Vec::new() }));
     }
     for run in &runs {
-        sections.push((run[0].at, NoteSection { heading: Some(heading(run)), time: time_of(run[0].at), points: Vec::new() }));
+        sections.push((run[0].at, NoteSection { heading: Some(heading(&v, run)), time: time_of(run[0].at), points: Vec::new() }));
     }
     for &i in &picked {
         let at = sentences[i].at;
@@ -401,8 +507,7 @@ mod tests {
 
     #[test]
     fn sentences_join_lines_and_split_on_stops() {
-        let stemmer = Stemmer::create(Algorithm::English);
-        let s = sentences(&stemmer, &[(0, "The grace of God is"), (2000, "enough for you. Do you believe"), (4000, "it?")]);
+        let s = sentences(&Vocab::new(Lang::En), &[(0, "The grace of God is"), (2000, "enough for you. Do you believe"), (4000, "it?")]);
         let texts: Vec<_> = s.iter().map(|s| s.text.as_str()).collect();
         assert_eq!(texts, ["The grace of God is enough for you.", "Do you believe it?"]);
         assert_eq!(s[1].at, 2000);
@@ -441,6 +546,38 @@ mod tests {
     }
 
     #[test]
+    fn notes_in_french() {
+        let jean = |v| ScriptureRef { book_id: 43, chapter: 3, verse_start: Some(v), verse_end: None };
+        let shown = |at: i64, v: u16, text: &str| Entry::Shown {
+            at,
+            label: format!("Jean 3:{v}"),
+            translation: "LSG".into(),
+            text: text.into(),
+            reference: Some(jean(v)),
+            song: None,
+        };
+        let entries = vec![
+            said(0, "Bonjour église, vous pouvez vous asseoir."),
+            said(5, "Aujourd'hui nous parlons de l'amour de Dieu et de la façon dont son amour transforme toute notre vie."),
+            shown(20_000, 16, "Car Dieu a tant aimé le monde qu'il a donné son Fils unique"),
+            said(22, "Car Dieu a tant aimé le monde qu'il a donné son Fils unique."),
+            said(30, "Retenez que l'amour de Dieu ne se mérite pas, son amour est un don de la grâce que l'on reçoit par la foi."),
+            said(40, "La grâce signifie que Dieu donne son amour gratuitement, et la foi est la manière de recevoir cette grâce chaque jour."),
+            said(50, "Alors le point est celui-ci : recevez sa grâce par la foi et laissez son amour changer votre manière d'aimer les autres."),
+            said(60, "Tournez-vous vers votre voisin et dites-lui que Dieu vous aime."),
+            said(70, "La foi grandit quand on écoute la parole, et la grâce grandit quand on marche dans son amour avec les autres croyants."),
+            shown(80_000, 17, "Dieu, en effet, n'a pas envoyé son Fils dans le monde pour qu'il juge le monde"),
+        ];
+        let notes = notes_from(&entries);
+        assert!(notes.themes.iter().any(|t| t == "amour") && notes.themes.iter().any(|t| t == "grâce"), "{:?}", notes.themes);
+        assert!(notes.themes.iter().all(|t| !["dieu", "que", "son", "est"].contains(&t.as_str())), "{:?}", notes.themes);
+        let all: Vec<&str> = notes.sections.iter().flat_map(|s| s.points.iter().map(String::as_str)).collect();
+        assert!(all.iter().any(|p| p.starts_with("Alors le point est")), "{all:?}");
+        assert!(!all.iter().any(|p| p.contains("voisin") || p.contains("Bonjour")), "small talk: {all:?}");
+        assert!(notes.sections.iter().any(|s| s.heading.as_deref() == Some("Jean 3:16–17")), "{:?}", notes.sections);
+    }
+
+    #[test]
     fn sung_lines_are_not_points() {
         let mut entries: Vec<Entry> = (0..6)
             .map(|i| said(i * 10, "Grace means God gives his love freely, and faith is how you receive that grace every single day."))
@@ -461,7 +598,9 @@ mod tests {
         assert_eq!(speech("*Singing* Praise him [MUSIC] (applause) now"), "Praise him now");
         assert!(repetitive("There is no, no, no, no, no, no, no, no."));
         assert!(!repetitive("Grace means God gives his love freely to everyone."));
-        assert!(is_book_name("corinthians") && !is_book_name("grace"));
+        let en = Vocab::new(Lang::En);
+        assert!(en.is_book_name("corinthians") && !en.is_book_name("grace"));
+        assert!(Vocab::new(Lang::Fr).is_book_name("Éphésiens"));
     }
 
     #[test]

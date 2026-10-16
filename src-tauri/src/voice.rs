@@ -4,10 +4,15 @@
 //! a command: said on its own ("Next verse." / "Go back.") or as an instruction ("let's go to
 //! the next verse", "take us back to the previous verse"). Narration ("in the next verse Paul
 //! says…"), places ("let's go back to Genesis") and time ("next week") are left alone.
+//!
+//! French and Spanish follow the same rules with their own phrases ("Verset suivant.",
+//! "Passons au verset 6.", "Volvamos atrás.", "Vamos al versículo siguiente.").
 
 use std::sync::LazyLock;
 
 use regex::Regex;
+
+use crate::scripture::{lang::Lang, numbers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
@@ -68,7 +73,7 @@ fn normalize(text: &str) -> String {
             },
         })
         .collect();
-    let t = crate::scripture::numbers::normalize(&words.join(" "));
+    let t = numbers::normalize(&words.join(" "));
     // "twenty first" → "20 1th" → "21th"
     let mut out: Vec<String> = Vec::new();
     for w in t.split_whitespace() {
@@ -180,8 +185,108 @@ pub fn parse(text: &str) -> Option<Command> {
 
 /// A command split by a pause ("Go to verse." / "6."): the previous sentence and this one read
 /// together. Only a specific verse can be completed this way.
+#[cfg(test)]
 pub fn parse_joined(previous: &str, current: &str) -> Option<Command> {
     parse(&format!("{previous} {current}")).filter(|c| c.is_verse())
+}
+
+/// The command in a finished sentence said in any of `langs`.
+pub fn parse_in(text: &str, langs: &[Lang]) -> Option<Command> {
+    langs.iter().find_map(|&l| match l {
+        Lang::En => parse(text),
+        _ => Phrases::of(l).and_then(|p| p.parse(text, l)),
+    })
+}
+
+/// `parse_joined` for any of `langs`.
+pub fn parse_joined_in(previous: &str, current: &str, langs: &[Lang]) -> Option<Command> {
+    parse_in(&format!("{previous} {current}"), langs).filter(|c| c.is_verse())
+}
+
+/// Commands in another language, matched on text normalised for it: "verset" is "verse",
+/// numbers are digits, "à" between numbers is "to", and "au"/"le"/"del" before "verse" are gone.
+struct Phrases {
+    /// The whole sentence: "Verset suivant." / "Siguiente."
+    alone: Regex,
+    /// An instruction anywhere: "passons au verset suivant", "vamos al versículo anterior".
+    instruction: Regex,
+    /// "En arrière." / "Volvamos atrás."
+    back: Regex,
+    /// "Allons au verset 6", "Leamos los versículos 6 al 8".
+    verse_number: Regex,
+    /// "Allons au 24." on its own.
+    bare_number: Regex,
+    /// After a verse number these name another chapter: "lisons le verset 6 de Jean 3".
+    elsewhere: &'static [&'static str],
+}
+
+static FRENCH: LazyLock<Phrases> = LazyLock::new(|| {
+    let filler = r"(?:(?:alors|donc|et|maintenant|bien|bon|ok|okay|daccord|oui|eglise|freres|soeurs|sil vous plait)\s+)*";
+    let verb = r"(?:allons|allez|passons|passez|lisons|lisez|retournons|revenons|revenez|retournez|voyons|regardons|montrez nous|montre nous|affichez|affiche|va|aller|passer|lire)";
+    let which = r"(?:verse\s+(?P<w1>suivant|precedent|prochain)|(?P<w2>suivant|prochain|precedent|1|dernier)\s+verse)";
+    let please = r"(?:\s+(?:sil vous plait|svp))?";
+    Phrases {
+        alone: Regex::new(&format!(r"^{filler}(?:(?:le|au)\s+)?(?:{which}|(?P<w3>suivant|precedent)){please}$")).unwrap(),
+        instruction: Regex::new(&format!(r"\b{verb}(?:\s+(?:au|a|le|aux|les))?\s+{which}\b")).unwrap(),
+        back: Regex::new(&format!(r"^{filler}(?:(?:retour|revenons|retournons|reculons|revenez|on revient|on retourne)\s+)?en arriere(?:\s+dun verse)?{please}$")).unwrap(),
+        verse_number: Regex::new(&format!(r"\b{verb}(?:\s+(?:au|aux|a|le|les))?\s+verses?(?:\s+numero)?\s+(?P<s>\d{{1,3}})(?:\s+(?:to|and)\s+(?:verses?\s+)?(?P<e>\d{{1,3}}))?(?P<rest>.*)$")).unwrap(),
+        bare_number: Regex::new(&format!(r"^{filler}(?:allons|allez|passons|va)\s+(?:au|a)\s+(?P<s>\d{{1,3}})(?:\s+to\s+(?P<e>\d{{1,3}}))?{please}$")).unwrap(),
+        elsewhere: &["de ", "du ", "dans ", "en "],
+    }
+});
+
+static SPANISH: LazyLock<Phrases> = LazyLock::new(|| {
+    let filler = r"(?:(?:bueno|bien|entonces|ahora|y|ok|okay|vale|si|hermanos|iglesia|pues|por favor)\s+)*";
+    let verb = r"(?:vamos|vayamos|pasemos|pasamos|pasa|pase|leamos|lean|lee|regresemos|regresamos|volvamos|volvemos|veamos|miremos|muestranos|ir|pasar|leer)";
+    let which = r"(?:verse\s+(?P<w1>siguiente|anterior|proximo)|(?P<w2>siguiente|proximo|anterior|1|ultimo)\s+verse)";
+    let please = r"(?:\s+por favor)?";
+    Phrases {
+        alone: Regex::new(&format!(r"^{filler}(?:(?:el|al)\s+)?(?:{which}|(?P<w3>siguiente|anterior)){please}$")).unwrap(),
+        instruction: Regex::new(&format!(r"\b{verb}(?:\s+(?:al|a|el|los))?\s+{which}\b")).unwrap(),
+        back: Regex::new(&format!(r"^{filler}(?:(?:volvamos|regresemos|vamos|regresa|vuelve)\s+)?(?:hacia\s+)?atras(?:\s+un verse)?{please}$|^{filler}regresa{please}$")).unwrap(),
+        verse_number: Regex::new(&format!(r"\b{verb}(?:\s+(?:al|a|el|los))?\s+verses?(?:\s+numero)?\s+(?P<s>\d{{1,3}})(?:\s+(?:to|and)\s+(?:verses?\s+)?(?P<e>\d{{1,3}}))?(?P<rest>.*)$")).unwrap(),
+        bare_number: Regex::new(&format!(r"^{filler}(?:vamos|pasemos|ve)\s+(?:al|a)\s+(?P<s>\d{{1,3}})(?:\s+to\s+(?P<e>\d{{1,3}}))?{please}$")).unwrap(),
+        elsewhere: &["de ", "del ", "en "],
+    }
+});
+
+impl Phrases {
+    fn of(lang: Lang) -> Option<&'static Phrases> {
+        match lang {
+            Lang::Fr => Some(&FRENCH),
+            Lang::Es => Some(&SPANISH),
+            Lang::En => None,
+        }
+    }
+
+    fn parse(&self, text: &str, lang: Lang) -> Option<Command> {
+        let t = numbers::normalize_in(text, &[lang]);
+        if t.is_empty() || t.split(' ').count() > 24 {
+            return None;
+        }
+        if let Some(c) = self.verse_number.captures(&t) {
+            let rest = c.name("rest").map_or("", |m| m.as_str()).trim_start();
+            if !self.elsewhere.iter().any(|w| rest.starts_with(w)) {
+                return verse(&c["s"], c.name("e").map(|m| m.as_str()));
+            }
+        }
+        if let Some(c) = self.bare_number.captures(&t) {
+            return verse(&c["s"], c.name("e").map(|m| m.as_str()));
+        }
+        let which = |c: regex::Captures| {
+            let w = ["w1", "w2", "w3"].iter().find_map(|n| c.name(n)).map(|m| m.as_str()).unwrap_or("");
+            match w {
+                "suivant" | "prochain" | "siguiente" | "proximo" => Command::Next,
+                "precedent" | "anterior" => Command::Previous,
+                "1" => Command::First,
+                _ => Command::Final, // "dernier", "ultimo"
+            }
+        };
+        if let Some(c) = self.alone.captures(&t).or_else(|| self.instruction.captures(&t)) {
+            return Some(which(c));
+        }
+        self.back.is_match(&t).then_some(Command::Previous)
+    }
 }
 
 #[cfg(test)]
@@ -258,5 +363,86 @@ mod tests {
         assert_eq!(parse_joined("Go to verse.", "6."), Some(Command::Verse(6, None)));
         assert_eq!(parse_joined("Let's go to the", "tenth verse."), Some(Command::Verse(10, None)));
         assert_eq!(parse_joined("God is good.", "Next."), None, "only verse numbers complete across sentences");
+    }
+
+    #[test]
+    fn french_commands() {
+        let fr = |s: &str| parse_in(s, &[Lang::Fr]);
+        for (said, want) in [
+            ("Verset suivant.", Command::Next),
+            ("Suivant.", Command::Next),
+            ("Le verset suivant, s'il vous plaît.", Command::Next),
+            ("Passons au verset suivant.", Command::Next),
+            ("Lisons le verset suivant.", Command::Next),
+            ("Allons au prochain verset.", Command::Next),
+            ("Verset précédent.", Command::Previous),
+            ("Revenons au verset précédent.", Command::Previous),
+            ("En arrière.", Command::Previous),
+            ("Retour en arrière.", Command::Previous),
+            ("Revenons en arrière, s'il vous plaît.", Command::Previous),
+            ("Allons au premier verset.", Command::First),
+            ("Lisons le dernier verset.", Command::Final),
+            ("Allons au verset 6.", Command::Verse(6, None)),
+            ("Allez au verset six.", Command::Verse(6, None)),
+            ("Lisons les versets 6 à 8.", Command::Verse(6, Some(8))),
+            ("Passons au verset vingt-quatre.", Command::Verse(24, None)),
+            ("Allons au 24.", Command::Verse(24, None)),
+        ] {
+            assert_eq!(fr(said), Some(want), "{said}");
+        }
+        for said in [
+            "Dans le verset suivant, Paul dit que nous sommes plus que vainqueurs.",
+            "Revenons à Genèse chapitre 3.",
+            "La semaine prochaine, nous serons de retour.",
+            "Lisons le verset 6 de Jean 3.",
+            "Au verset 6, Paul parle de la foi.",
+            "Le dernier verset de ce chapitre est mon préféré.",
+            "Il est revenu en arrière dans sa vie.",
+        ] {
+            assert_eq!(fr(said), None, "{said}");
+        }
+        assert_eq!(parse_joined_in("Allons au verset.", "6.", &[Lang::Fr]), Some(Command::Verse(6, None)));
+    }
+
+    #[test]
+    fn spanish_commands() {
+        let es = |s: &str| parse_in(s, &[Lang::Es]);
+        for (said, want) in [
+            ("Versículo siguiente.", Command::Next),
+            ("Siguiente versículo.", Command::Next),
+            ("Siguiente.", Command::Next),
+            ("Vamos al versículo siguiente.", Command::Next),
+            ("Pasemos al siguiente versículo.", Command::Next),
+            ("Versículo anterior.", Command::Previous),
+            ("Regresemos al versículo anterior.", Command::Previous),
+            ("Volvamos atrás.", Command::Previous),
+            ("Atrás, por favor.", Command::Previous),
+            ("Vamos al primer versículo.", Command::First),
+            ("Leamos el último versículo.", Command::Final),
+            ("Vamos al versículo 6.", Command::Verse(6, None)),
+            ("Vamos al versículo seis.", Command::Verse(6, None)),
+            ("Leamos los versículos 6 al 8.", Command::Verse(6, Some(8))),
+            ("Vamos al 24.", Command::Verse(24, None)),
+        ] {
+            assert_eq!(es(said), Some(want), "{said}");
+        }
+        for said in [
+            "En el siguiente versículo Pablo dice que somos más que vencedores.",
+            "Volvamos a Génesis capítulo 3.",
+            "La próxima semana tenemos culto de jóvenes.",
+            "Leamos el versículo 6 de Juan 3.",
+            "El último versículo de este capítulo es mi favorito.",
+            "Él miró atrás y vio a su padre.",
+        ] {
+            assert_eq!(es(said), None, "{said}");
+        }
+    }
+
+    #[test]
+    fn languages_together() {
+        let both = [Lang::En, Lang::Fr];
+        assert_eq!(parse_in("Next verse.", &both), Some(Command::Next));
+        assert_eq!(parse_in("Verset suivant.", &both), Some(Command::Next));
+        assert_eq!(parse_in("Verset suivant.", &[Lang::En]), None);
     }
 }

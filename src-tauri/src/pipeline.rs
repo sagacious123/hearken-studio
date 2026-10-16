@@ -53,8 +53,8 @@ use crate::{
     follow::{self, Follower, LyricsIndex},
     scripture::{
         build_slide,
+        lang::Lang,
         parser::{ParsedRef, RefKind, ReferenceParser},
-        books,
         meaning::{self, Meaning},
         quote, BibleDb, Slide, Versification,
     },
@@ -107,6 +107,8 @@ pub struct PipelineConfig {
     pub refine: Option<RefineConfig>,
     /// YAMNet, to tell singing from speech; without it, only known lyrics count as singing.
     pub singing_model: Option<PathBuf>,
+    /// The preaching languages (the models must be multilingual unless it's only English).
+    pub languages: Vec<Lang>,
 }
 
 pub struct RefineConfig {
@@ -267,10 +269,14 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
         Some(rc) => {
             let (tx, rx) = crossbeam_channel::bounded::<RefineJob>(REFINE_QUEUE);
             let (app, v11n, bible_path, dedupe, room) = (app.clone(), v11n.clone(), cfg.bible_path.clone(), dedupe.clone(), room.clone());
+            let langs = cfg.languages.clone();
             let name = rc.model_name.clone();
             let handle = thread::Builder::new().name("asr-refine".into()).spawn(move || {
                 priority::background();
-                let engine = WhisperEngine::load_with_fallback(&rc.model_path, rc.use_gpu, rc.threads);
+                let engine = WhisperEngine::load_with_fallback(&rc.model_path, rc.use_gpu, rc.threads).map(|mut e| {
+                    e.set_languages(&langs);
+                    e
+                });
                 let bible = BibleDb::open(&bible_path);
                 let (mut engine, bible) = match (engine, bible) {
                     (Ok(e), Ok(b)) => (e, b),
@@ -284,8 +290,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
                     Some(c) => c,
                     None => {
                         // First use on this computer: time it on a full sentence and remember.
-                        let books: Vec<&str> = books::BOOKS.iter().map(|b| b.display).collect();
-                        let prompt = whisper::accurate_prompt("", &[], &books);
+                        let prompt = whisper::accurate_prompt("", &[], &langs);
                         match hardware::load_wav(&rc.bench_wav).and_then(|a| accuracy::calibrate(&mut engine, &rc.model_name, &a, &prompt)) {
                             Ok(c) => {
                                 AccuracyProfile::record(&rc.calibration_file, &rc.app_version, c.clone());
@@ -306,7 +311,8 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
                     return;
                 }
                 log::info!("accuracy pass ready: {} on {} ({})", rc.model_name, engine.backend(), cal.describe());
-                RefineWorker { app, bible, v11n, parser: ReferenceParser::new(), dedupe, opts: cal.options(), lyrics: LyricsIndex::default(), room }.run(&mut engine, rx);
+                let parser = ReferenceParser::for_languages(&langs);
+                RefineWorker { app, bible, v11n, parser, dedupe, opts: cal.options(), lyrics: LyricsIndex::default(), room, langs }.run(&mut engine, rx);
                 log::info!("accuracy pass stopped");
             })?;
             (Some(tx), Some(handle), Some(name))
@@ -323,9 +329,13 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
         let infer_ewma = infer_ewma.clone();
         let (model_path, use_gpu, threads, reduced_ctx, bible_path, base_step) =
             (cfg.model_path.clone(), cfg.use_gpu, cfg.threads, cfg.reduced_ctx, cfg.bible_path.clone(), cfg.step_ms);
+        let langs = cfg.languages.clone();
         thread::Builder::new().name("asr".into()).spawn(move || {
             priority::interactive();
-            let engine = WhisperEngine::load_with_fallback(&model_path, use_gpu, threads);
+            let engine = WhisperEngine::load_with_fallback(&model_path, use_gpu, threads).map(|mut e| {
+                e.set_languages(&langs);
+                e
+            });
             let bible = BibleDb::open(&bible_path);
             let (mut engine, bible) = match (engine, bible) {
                 (Ok(e), Ok(b)) => {
@@ -341,7 +351,8 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
                 app,
                 bible,
                 v11n,
-                parser: ReferenceParser::new(),
+                parser: ReferenceParser::for_languages(&langs),
+                langs,
                 follower: Follower::default(),
                 lyrics: LyricsIndex::default(),
                 dedupe,
@@ -539,6 +550,7 @@ struct AsrWorker {
     bible: BibleDb,
     v11n: Arc<Versification>,
     parser: ReferenceParser,
+    langs: Vec<Lang>,
     follower: Follower,
     lyrics: LyricsIndex,
     dedupe: Dedupe,
@@ -629,7 +641,7 @@ impl AsrWorker {
 
         let opts = DecodeOptions::live(!job.is_final, self.reduced_ctx);
         let t0 = Instant::now();
-        let transcript = match engine.transcribe(&job.audio, opts, &whisper::live_prompt(&settings.vocabulary)) {
+        let transcript = match engine.transcribe(&job.audio, opts, &whisper::live_prompt(&settings.vocabulary, &self.langs)) {
             Ok(t) => t,
             Err(e) => {
                 log::warn!("transcription failed: {e:#}");
@@ -679,9 +691,10 @@ impl AsrWorker {
         // a command acts once, and only while a scripture is on screen. A sung "go back" is a lyric.
         if job.is_final && !sung {
             let previous = self.last_sentence.take().filter(|(at, _)| at.elapsed() < Duration::from_secs(8)).map(|(_, t)| t);
+            let langs = &self.langs;
             let command = settings
                 .voice_commands
-                .then(|| voice::parse(&transcript.text).or_else(|| previous.as_deref().and_then(|p| voice::parse_joined(p, &transcript.text))))
+                .then(|| voice::parse_in(&transcript.text, langs).or_else(|| previous.as_deref().and_then(|p| voice::parse_joined_in(p, &transcript.text, langs))))
                 .flatten();
             let live = state.presenter.snapshot();
             match command {
@@ -753,47 +766,68 @@ impl AsrWorker {
         }
 
         let meaning = settings.meaning_detection.then(|| state.meaning.lock().clone()).flatten();
-        let refs = find_references(&mut self.parser, &self.bible, &self.v11n, &transcript.text, job.is_final, settings.quote_detection, meaning.as_deref(), asr_factor);
+        let heard = Heard { text: &transcript.text, is_final: job.is_final, languages: &self.langs, language: transcript.language, asr_factor };
+        let refs = find_references(&mut self.parser, &self.bible, &self.v11n, heard, settings.quote_detection, meaning.as_deref());
         emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, singing, job.utterance, job.captured_at);
     }
 }
 
-/// References in a transcript: announced ("John 3:16") and, on finished sentences with nothing
-/// announced, quoted verses.
-#[allow(clippy::too_many_arguments)]
 /// When the first sample of a sentence was heard.
 fn heard_from(audio: &[f32], captured_at: Instant) -> Instant {
     let len = Duration::from_secs_f32(audio.len() as f32 / SAMPLE_RATE as f32);
     captured_at.checked_sub(len).unwrap_or(captured_at)
 }
 
+/// A transcript, as heard.
+struct Heard<'a> {
+    text: &'a str,
+    is_final: bool,
+    /// The preaching languages, and the one this was heard in (if the model said).
+    languages: &'a [Lang],
+    language: Option<Lang>,
+    /// How sure the speech model was, as a confidence factor.
+    asr_factor: f32,
+}
+
+/// References in a transcript: announced ("John 3:16") and, on finished sentences with nothing
+/// announced, quoted verses (in the language it was heard in, or each preaching language).
 fn find_references(
     parser: &mut ReferenceParser,
     bible: &BibleDb,
     v11n: &Versification,
-    text: &str,
-    is_final: bool,
+    heard: Heard,
     quote_detection: bool,
     meaning: Option<&Meaning>,
-    asr_factor: f32,
 ) -> Vec<ParsedRef> {
+    let Heard { text, is_final, asr_factor, .. } = heard;
     let mut refs = parser.parse(text, is_final, v11n);
     for r in &mut refs {
         r.confidence *= asr_factor;
     }
+    let quote_langs: Vec<Lang> = match heard.language {
+        Some(l) => vec![l],
+        None => heard.languages.to_vec(),
+    };
     if refs.is_empty() && is_final && quote_detection {
-        match quote::find_quotes(bible, text) {
-            Ok(hits) => refs.extend(hits.into_iter().map(|hit| ParsedRef {
-                reference: hit.reference,
-                confidence: hit.score * asr_factor,
-                tentative: false,
-                kind: RefKind::Quote,
-                matched: hit.phrase,
-            })),
-            Err(e) => log::warn!("quote search failed: {e:#}"),
+        let mut hits = Vec::new();
+        for &lang in &quote_langs {
+            match quote::find_quotes_in(bible, text, lang) {
+                Ok(found) => hits.extend(found),
+                Err(e) => log::warn!("quote search failed: {e:#}"),
+            }
         }
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+        refs.extend(hits.into_iter().take(quote::MAX_HITS).map(|hit| ParsedRef {
+            reference: hit.reference,
+            confidence: hit.score * asr_factor,
+            tentative: false,
+            kind: RefKind::Quote,
+            matched: hit.phrase,
+        }));
     }
-    // Nothing said or quoted word for word: a verse said in other words?
+    // Nothing said or quoted word for word: a verse said in other words? (English only: the
+    // meaning model is.)
+    let meaning = meaning.filter(|_| quote_langs.contains(&Lang::En));
     if let Some(hit) = meaning.filter(|_| refs.is_empty() && is_final).and_then(|m| m.live_hit(text)) {
         refs.push(ParsedRef {
             reference: hit.reference,
@@ -882,17 +916,17 @@ struct RefineWorker {
     /// To tell a sung lyric from a quoted verse, as the live pass does.
     lyrics: LyricsIndex,
     room: Arc<Room>,
+    langs: Vec<Lang>,
 }
 
 impl RefineWorker {
     fn run(&mut self, engine: &mut WhisperEngine, jobs: Receiver<RefineJob>) {
-        let books: Vec<&str> = books::BOOKS.iter().map(|b| b.display).collect();
         while let Ok(job) = jobs.recv() {
             let app = self.app.clone();
             let state = app.state::<AppState>();
             let settings = state.settings.lock().clone();
             let planned: Vec<String> = state.plan.lock().refs.iter().map(|r| r.label()).collect();
-            let prompt = whisper::accurate_prompt(&settings.vocabulary, &planned, &books);
+            let prompt = whisper::accurate_prompt(&settings.vocabulary, &planned, &self.langs);
 
             // Fallen behind: let this sentence keep its quick text rather than grow a backlog.
             let waited = job.captured_at.elapsed();
@@ -939,7 +973,8 @@ impl RefineWorker {
             }
             let asr_factor = 0.7 + 0.3 * transcript.confidence.clamp(0.0, 1.0);
             let meaning = settings.meaning_detection.then(|| state.meaning.lock().clone()).flatten();
-            let refs = find_references(&mut self.parser, &self.bible, &self.v11n, &transcript.text, true, settings.quote_detection, meaning.as_deref(), asr_factor);
+            let heard = Heard { text: &transcript.text, is_final: true, languages: &self.langs, language: transcript.language, asr_factor };
+            let refs = find_references(&mut self.parser, &self.bible, &self.v11n, heard, settings.quote_detection, meaning.as_deref());
             let library = state.songs.version();
             if self.lyrics.version() != library {
                 self.lyrics.refresh(library, state.songs.all());

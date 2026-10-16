@@ -1,9 +1,11 @@
-//! The 66-book Protestant canon with spoken/ASR aliases.
+//! The 66-book Protestant canon with spoken/ASR aliases. Names in other languages are in `lang`.
 //!
 //! Aliases are lowercase, punctuation-free, and match the output of `numbers::normalize`.
 //! Numbered books list their *base* aliases; ordinal prefixes ("1", "first", "1st", "ii", …)
 //! are generated. `ambiguous` books are also common English words ("Mark", "Job", "Acts"),
 //! so references to them need stronger evidence before auto-projecting.
+
+use super::lang::Lang;
 
 pub struct Book {
     pub id: u8,
@@ -158,27 +160,64 @@ pub fn by_id(id: u8) -> Option<&'static Book> {
     BOOKS.get((id as usize).checked_sub(1)?)
 }
 
+/// A book's name as it's listened for, before any ordinal ("corinthians", "jean").
+#[derive(Debug, Clone)]
+pub struct Spelling {
+    pub id: u8,
+    pub text: &'static str,
+    pub lang: Lang,
+    /// An ambiguous book, an everyday word, or a short abbreviation: needs stronger evidence.
+    pub weak: bool,
+    /// One of the `MISHEARD` spellings.
+    pub misheard: bool,
+}
+
+/// Every name of every book in `langs`.
+pub fn spellings(langs: &[Lang]) -> Vec<Spelling> {
+    let mut out = Vec::new();
+    for &lang in langs {
+        if lang == Lang::En {
+            for b in &BOOKS {
+                for &a in b.aliases {
+                    out.push(Spelling { id: b.id, text: a, lang, weak: b.ambiguous || a.len() <= 3, misheard: false });
+                }
+                for (a, weak) in misheard_for(b.id) {
+                    out.push(Spelling { id: b.id, text: a, lang, weak: b.ambiguous || weak || a.len() <= 3, misheard: true });
+                }
+            }
+            continue;
+        }
+        for (ids, names, weak) in lang.books() {
+            for &id in *ids {
+                for &a in *names {
+                    out.push(Spelling { id, text: a, lang, weak: *weak || a.len() <= 3, misheard: false });
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The book whose name `word` sounds like ("philippines" → Philippians, "romance" → Romans),
-/// among books with the given ordinal ("first corinthean"). None if no book is close or two
-/// different books are equally close.
-pub fn fuzzy_match(word: &str, ordinal: Option<u8>) -> Option<(&'static Book, usize)> {
+/// among `spellings` of books with the given ordinal ("first corinthean"). None if no book is
+/// close or two different books are equally close.
+pub fn fuzzy_match(word: &str, ordinal: Option<u8>, spellings: &[Spelling]) -> Option<(&'static Book, usize)> {
     let word_sound = super::fuzzy::sound(word);
     let mut best: Option<(usize, &'static Book)> = None;
     let mut tied = false;
-    for b in BOOKS.iter().filter(|b| b.ordinal == ordinal) {
-        let spellings = b.aliases.iter().copied().chain(misheard_for(b.id).filter(|(_, weak)| !weak).map(|(s, _)| s));
-        for alias in spellings.filter(|a| a.len() >= 4 && !a.contains(' ')) {
-            if !super::fuzzy::alike(word, &word_sound, alias, &super::fuzzy::sound(alias)) {
-                continue;
-            }
-            let d = super::fuzzy::edits(word, alias);
-            match best {
-                Some((bd, bb)) if d == bd && bb.id != b.id => tied = true,
-                Some((bd, _)) if d >= bd => {}
-                _ => {
-                    best = Some((d, b));
-                    tied = false;
-                }
+    let candidates = spellings.iter().filter(|s| !(s.misheard && s.weak) && s.text.len() >= 4 && !s.text.contains(' '));
+    for s in candidates {
+        let Some(b) = by_id(s.id).filter(|b| b.ordinal == ordinal) else { continue };
+        if !super::fuzzy::alike(word, &word_sound, s.text, &super::fuzzy::sound(s.text)) {
+            continue;
+        }
+        let d = super::fuzzy::edits(word, s.text);
+        match best {
+            Some((bd, bb)) if d == bd && bb.id != b.id => tied = true,
+            Some((bd, _)) if d >= bd => {}
+            _ => {
+                best = Some((d, b));
+                tied = false;
             }
         }
     }
@@ -199,19 +238,23 @@ fn ordinal_prefixes(n: u8) -> &'static [&'static str] {
     }
 }
 
-/// (alias, book id, weak). An alias is weak if its book is ambiguous or it is a short abbreviation.
-pub fn all_aliases() -> Vec<(String, u8, bool)> {
+/// (alias, book id, weak) for every name in `langs`, ordinals included ("1 john", "first john",
+/// "1 epitre de jean", "1 de juan"). Other languages' ordinals are digits by the time the parser
+/// sees them (see `numbers::normalize_in`).
+pub fn aliases_for(langs: &[Lang]) -> Vec<(String, u8, bool)> {
     let mut out = Vec::new();
-    for b in &BOOKS {
-        let spellings = b.aliases.iter().map(|&a| (a, false)).chain(misheard_for(b.id));
-        for (a, misheard_weak) in spellings {
-            let weak = b.ambiguous || misheard_weak || a.len() <= 3;
-            match b.ordinal {
-                None => out.push((a.to_string(), b.id, weak)),
-                Some(n) => {
-                    for p in ordinal_prefixes(n) {
-                        out.push((format!("{p} {a}"), b.id, weak));
-                    }
+    for s in spellings(langs) {
+        let Some(book) = by_id(s.id) else { continue };
+        match book.ordinal {
+            None => out.push((s.text.to_string(), s.id, s.weak)),
+            Some(n) if s.lang == Lang::En => {
+                for p in ordinal_prefixes(n) {
+                    out.push((format!("{p} {}", s.text), s.id, s.weak));
+                }
+            }
+            Some(n) => {
+                for link in s.lang.ordinal_links() {
+                    out.push((format!("{n} {link}{}", s.text), s.id, s.weak));
                 }
             }
         }
@@ -219,3 +262,30 @@ pub fn all_aliases() -> Vec<(String, u8, bool)> {
     out
 }
 
+/// English names: (alias, book id, weak). An alias is weak if its book is ambiguous or it is a
+/// short abbreviation.
+#[cfg(test)]
+pub fn all_aliases() -> Vec<(String, u8, bool)> {
+    aliases_for(&[Lang::En])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aliases_in_every_language() {
+        let all = aliases_for(&Lang::ALL);
+        let find = |a: &str| all.iter().find(|(x, _, _)| x == a).map(|(_, id, weak)| (*id, *weak));
+        assert_eq!(find("1 john"), Some((62, false)));
+        assert_eq!(find("1 jean"), Some((62, false)));
+        assert_eq!(find("jean"), Some((43, false)));
+        assert_eq!(find("1 epitre aux corinthiens"), Some((46, false)));
+        assert_eq!(find("2 de timoteo"), Some((55, false)));
+        assert_eq!(find("san juan"), Some((43, false)));
+        assert_eq!(find("pierre"), None, "only with an ordinal");
+        assert_eq!(find("1 pierre"), Some((60, true)));
+        assert_eq!(find("marc"), Some((41, true)));
+        assert!(all_aliases().iter().all(|(a, _, _)| a != "jean"), "English only");
+    }
+}

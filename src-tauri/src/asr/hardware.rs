@@ -301,8 +301,7 @@ mod tests {
         let mut reader = hound::WavReader::open(res.join("bench/jfk.wav")).unwrap();
         let audio: Vec<f32> = reader.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
         let threads = Specs::detect().recommended_threads();
-        let books: Vec<&str> = crate::scripture::books::BOOKS.iter().map(|b| b.display).collect();
-        let prompt = super::super::whisper::accurate_prompt("", &[], &books);
+        let prompt = super::super::whisper::accurate_prompt("", &[], &[crate::scripture::lang::Lang::En]);
         let variants = [("beam+full", true, true), ("beam+fit", true, false), ("greedy+full", false, true), ("greedy+fit", false, false)];
         for id in ["base.en", "small.en", "large-v3-turbo"] {
             let Some(path) = super::super::models::find(&dirs, id) else { eprintln!("{id}: not installed"); continue };

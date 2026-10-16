@@ -28,7 +28,7 @@ use crate::{
     recap,
     pipeline::{self, PipelineConfig, PipelineInfo, RefineConfig},
     presentation::{self, MonitorInfo, OutputState},
-    scripture::{self, db, db::Translation, library, parser::ReferenceParser, ScriptureRef, Slide},
+    scripture::{self, db, db::Translation, lang::Lang, library, parser::ReferenceParser, ScriptureRef, Slide},
     share::ShareInfo,
     songs::{self, SongSummary},
     state::{write_json, AppState, Plan, Settings},
@@ -160,13 +160,23 @@ pub async fn start_pipeline(app: AppHandle, state: State<'_, AppState>) -> CmdRe
         None => benchmark(&app, &state).await?,
     };
     let settings = state.settings.lock().clone();
-    let model = settings.model_override.clone().unwrap_or(profile.model.clone());
+    let langs = settings.langs();
     let (bundled, downloaded) = (state.paths.models_dir.clone(), state.paths.downloaded_models());
     let dirs = [bundled.as_path(), downloaded.as_path()];
-    let model_file = models::find(&dirs, &model).ok_or_else(|| format!("model '{model}' not found — run scripts/fetch_models.sh"))?;
+    // Sermons in other languages need a multilingual model: the one sized for this computer,
+    // or the other size if only that one is downloaded.
+    let sized = settings.model_override.clone().unwrap_or(profile.model.clone());
+    let choices = models::live_choices(&sized, &langs);
+    let Some((model, model_file)) = choices.iter().find_map(|&id| models::find(&dirs, id).map(|p| (id.to_owned(), p))) else {
+        let names: Vec<&str> = langs.iter().filter(|l| **l != Lang::En).map(|l| l.name()).collect();
+        return Err(match models::info(choices[0]).filter(|m| !m.bundled) {
+            Some(m) => format!("LANGUAGE: Listening in {} needs the {} speech model ({} MB). Download it under Settings → Language.", names.join(" and "), m.label, m.bytes / 1_000_000),
+            None => format!("model '{}' not found — run scripts/fetch_models.sh", choices[0]),
+        });
+    };
     let use_gpu = settings.gpu_override.unwrap_or(profile.use_gpu);
     let calibrations = AccuracyProfile::load(&state.paths.accuracy_profile(), env!("CARGO_PKG_VERSION"));
-    let refine = choose_accuracy_model(&settings.accuracy_model, use_gpu, &dirs, &calibrations).map(|(id, path, calibration, forced)| RefineConfig {
+    let refine = choose_accuracy_model(&settings.accuracy_model, use_gpu, &dirs, &calibrations, &langs).map(|(id, path, calibration, forced)| RefineConfig {
         model_path: path,
         model_name: id.to_owned(),
         use_gpu,
@@ -189,6 +199,7 @@ pub async fn start_pipeline(app: AppHandle, state: State<'_, AppState>) -> CmdRe
         bible_path: state.paths.bible_db.clone(),
         refine,
         singing_model: Some(state.paths.models_dir.join("yamnet.onnx")),
+        languages: langs,
     };
     let v11n = state.versification.clone();
     let app2 = app.clone();
@@ -261,24 +272,30 @@ pub async fn stop_pipeline(state: State<'_, AppState>) -> CmdResult<()> {
 /// Which model (if any) re-transcribes finished sentences, with its saved speed test.
 /// "auto": the most accurate installed model proven to keep up here; failing that, an
 /// untested one (it's timed on first use: GPU machines try Turbo first, CPU-only Small).
+/// Sermons in other languages use the multilingual Small in place of the English one.
 fn choose_accuracy_model(
     choice: &str,
     use_gpu: bool,
     dirs: &[&Path],
     profile: &AccuracyProfile,
+    langs: &[Lang],
 ) -> Option<(&'static str, PathBuf, Option<Calibration>, bool)> {
     let backend = if use_gpu { GPU_BACKEND } else { "cpu" };
     let installed = |id: &'static str| models::find(dirs, id).map(|p| (id, p));
     let cal = |id: &str| profile.get(id, backend).cloned();
+    let small = models::for_languages("small.en", langs);
     match choice {
         "off" => None,
         "auto" => {
-            let best_known = ["large-v3-turbo", "small.en"].into_iter().filter(|id| cal(id).is_some_and(|c| c.usable)).find_map(installed);
-            let untested = if use_gpu { ["large-v3-turbo", "small.en"] } else { ["small.en", "large-v3-turbo"] };
+            let best_known = ["large-v3-turbo", small].into_iter().filter(|id| cal(id).is_some_and(|c| c.usable)).find_map(installed);
+            let untested = if use_gpu { ["large-v3-turbo", small] } else { [small, "large-v3-turbo"] };
             let first_untested = || untested.into_iter().filter(|id| cal(id).is_none()).find_map(installed);
             best_known.or_else(first_untested).map(|(id, p)| (id, p, cal(id), false))
         }
-        other => models::CATALOG.iter().find(|m| m.id == other && m.accuracy).and_then(|m| installed(m.id)).map(|(id, p)| (id, p, cal(id), true)),
+        other => {
+            let id = models::for_languages(other, langs);
+            models::CATALOG.iter().find(|m| m.id == id && m.accuracy).and_then(|m| installed(m.id)).map(|(id, p)| (id, p, cal(id), true))
+        }
     }
 }
 
@@ -290,11 +307,11 @@ fn calibrate_now(state: &AppState, id: &str, use_gpu: bool, live_threads: usize)
     let audio = hardware::load_wav(&state.paths.bench_wav).map_err(|e| format!("{e:#}"))?;
     let threads = priority::accuracy_threads(use_gpu, live_threads);
     let model = id.to_owned();
+    let langs = state.settings.lock().langs();
     let cal = std::thread::spawn(move || {
         priority::background();
         let mut engine = WhisperEngine::load_with_fallback(&path, use_gpu, threads).map_err(|e| format!("{e:#}"))?;
-        let books: Vec<&str> = scripture::books::BOOKS.iter().map(|b| b.display).collect();
-        let prompt = crate::asr::whisper::accurate_prompt("", &[], &books);
+        let prompt = crate::asr::whisper::accurate_prompt("", &[], &langs);
         accuracy::calibrate(&mut engine, &model, &audio, &prompt).map_err(|e| format!("{e:#}"))
     })
     .join()
@@ -389,9 +406,10 @@ pub async fn download_model(id: String, app: AppHandle, state: State<'_, AppStat
         models::download(&id2, &dir, |received, total| {
             let _ = app2.emit(events::MODEL_PROGRESS, DownloadProgress { id: id2.clone(), received, total, phase: "download" });
         }, &cancel)?;
-        // Time it right away, so "Automatic" knows whether it keeps up on this computer.
+        // Time it right away, so "Automatic" knows whether it keeps up on this computer. (Live
+        // models for other languages run at the size the benchmark chose; nothing to time.)
         let state = app2.state::<AppState>();
-        if state.pipeline.lock().is_none() {
+        if state.pipeline.lock().is_none() && models::info(&id2).is_some_and(|m| m.accuracy) {
             if let Ok((use_gpu, threads)) = gpu_and_threads(&state) {
                 let _ = app2.emit(events::MODEL_PROGRESS, DownloadProgress { id: id2.clone(), received: 1, total: 1, phase: "testing" });
                 if let Err(e) = calibrate_now(&state, &id2, use_gpu, threads) {
@@ -431,6 +449,50 @@ pub async fn delete_model(id: String, state: State<'_, AppState>) -> CmdResult<V
 #[tauri::command]
 pub async fn list_translations(state: State<'_, AppState>) -> CmdResult<Vec<Translation>> {
     Ok(state.bible.lock().translations())
+}
+
+// ---------- preaching languages ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageOption {
+    code: &'static str,
+    /// In English ("French") and in the language itself ("Français").
+    name: &'static str,
+    native: &'static str,
+    /// The Bible shown by default when it's preached.
+    bible: &'static str,
+}
+
+/// The languages Hearken can listen for.
+#[tauri::command]
+pub fn list_languages() -> Vec<LanguageOption> {
+    Lang::ALL.into_iter().map(|l| LanguageOption { code: l.code(), name: l.name(), native: l.native(), bible: l.bible() }).collect()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageSetup {
+    /// The default Bible of each language that has to be downloaded (bundled ones aren't listed).
+    bibles: Vec<library::LibraryItem>,
+    /// The speech model the languages need on this computer, unless it ships with the app.
+    speech_model: Option<ModelStatus>,
+}
+
+/// What listening in `languages` needs downloaded: their Bibles and the speech model.
+#[tauri::command]
+pub async fn language_setup(languages: Vec<String>, state: State<'_, AppState>) -> CmdResult<LanguageSetup> {
+    let langs = Lang::list(&languages);
+    let library = library::list(&state.paths.library());
+    let bibles = langs.iter().filter_map(|l| library.iter().find(|b| b.code.eq_ignore_ascii_case(l.bible())).cloned()).collect();
+    // Sized for this computer: by its benchmark, or (before the first start) by its memory.
+    let sized = state.hardware.lock().as_ref().map(|p| p.model.clone()).unwrap_or_else(|| {
+        if hardware::Specs::detect().total_ram_gb >= 6.0 { "base.en".into() } else { "tiny.en".into() }
+    });
+    let wanted = models::for_languages(&sized, &langs);
+    let dirs = model_dirs(&state);
+    let speech_model = models::statuses(&[dirs[0].as_path(), dirs[1].as_path()]).into_iter().find(|m| m.id == wanted && !m.bundled);
+    Ok(LanguageSetup { bibles, speech_model })
 }
 
 // ---------- search by meaning ----------
@@ -561,7 +623,7 @@ pub async fn search_scripture(query: String, translation: String, state: State<'
     let t0 = std::time::Instant::now();
     let bible = state.bible.lock();
     let secondary = secondary(&state);
-    let parsed = ReferenceParser::new().parse(&query, true, &state.versification).into_iter().next();
+    let parsed = ReferenceParser::typed().parse(&query, true, &state.versification).into_iter().next();
     let reference = match parsed {
         Some(p) => scripture::build_slide(&bible, &translation, secondary.as_deref(), &p.reference).map_err(err)?,
         None => None,
@@ -596,6 +658,8 @@ pub async fn search_scripture(query: String, translation: String, state: State<'
 pub struct BookInfo {
     id: u8,
     name: &'static str,
+    /// The name in other languages, by code ("fr": "Jean"), for menus in those languages.
+    names: std::collections::HashMap<&'static str, String>,
     /// Lowercase names people type: "jn", "1 cor", "first corinthians", "psalm".
     aliases: Vec<String>,
     /// Verses in each chapter (index 0 = chapter 1), from the reference translation.
@@ -606,14 +670,16 @@ pub struct BookInfo {
 #[tauri::command]
 pub async fn list_books(state: State<'_, AppState>) -> CmdResult<Vec<BookInfo>> {
     let mut aliases: std::collections::HashMap<u8, Vec<String>> = Default::default();
-    for (alias, id, _) in scripture::books::all_aliases() {
+    for (alias, id, _) in scripture::books::aliases_for(&Lang::ALL) {
         aliases.entry(id).or_default().push(alias);
     }
+    let other: Vec<(Lang, Vec<String>)> = Lang::ALL.into_iter().filter(|l| *l != Lang::En).map(|l| (l, l.book_names())).collect();
     Ok(scripture::books::BOOKS
         .iter()
         .map(|b| BookInfo {
             id: b.id,
             name: b.display,
+            names: other.iter().filter_map(|(l, names)| Some((l.code(), names.get(b.id as usize - 1)?.clone()))).collect(),
             aliases: aliases.remove(&b.id).unwrap_or_default(),
             verses: (1..=b.chapters).map(|c| state.versification.max_verse(b.id, c).unwrap_or(0)).collect(),
         })
@@ -872,7 +938,7 @@ pub async fn list_sessions(state: State<'_, AppState>) -> CmdResult<Vec<DaySumma
 
 #[tauri::command]
 pub async fn search_archive(query: String, state: State<'_, AppState>) -> CmdResult<Vec<ArchiveHit>> {
-    let parsed = ReferenceParser::new().parse(&query, true, &state.versification).into_iter().next();
+    let parsed = ReferenceParser::typed().parse(&query, true, &state.versification).into_iter().next();
     Ok(state.history.search(&query, parsed.as_ref().map(|p| &p.reference), 100))
 }
 
@@ -970,6 +1036,7 @@ mod tests {
 
     #[test]
     fn automatic_accuracy_model_prefers_proven_then_untested() {
+        const EN: [Lang; 1] = [Lang::En];
         let dir = std::env::temp_dir().join(format!("sb-choose-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for f in ["ggml-small.en-q5_1.bin", "ggml-large-v3-turbo-q5_0.bin"] {
@@ -983,25 +1050,33 @@ mod tests {
 
         // Nothing tested yet: GPU machines try Turbo first, CPU-only machines Small.
         let empty = AccuracyProfile::default();
-        assert_eq!(id(choose_accuracy_model("auto", true, &dirs, &empty)), Some("large-v3-turbo"));
-        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &empty)), Some("small.en"));
+        assert_eq!(id(choose_accuracy_model("auto", true, &dirs, &empty, &EN)), Some("large-v3-turbo"));
+        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &empty, &EN)), Some("small.en"));
 
         // CPU: Turbo proven too slow, Small proven fine → Small; both too slow → none.
         let mut p = AccuracyProfile { app_version: "x".into(), entries: vec![cal("large-v3-turbo", "cpu", false), cal("small.en", "cpu", true)] };
-        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &p)), Some("small.en"));
+        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &p, &EN)), Some("small.en"));
         p.entries = vec![cal("large-v3-turbo", "cpu", false), cal("small.en", "cpu", false)];
-        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &p)), None);
+        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &p, &EN)), None);
 
         // A proven model beats an untested more-accurate one only when the latter is unknown:
         // Turbo proven usable wins over everything.
         p.entries = vec![cal("large-v3-turbo", GPU_BACKEND, true)];
-        assert_eq!(id(choose_accuracy_model("auto", true, &dirs, &p)), Some("large-v3-turbo"));
+        assert_eq!(id(choose_accuracy_model("auto", true, &dirs, &p, &EN)), Some("large-v3-turbo"));
 
         // Explicit choice is honoured (and flagged as forced); off is off.
-        let forced = choose_accuracy_model("large-v3-turbo", false, &dirs, &AccuracyProfile::default()).unwrap();
+        let forced = choose_accuracy_model("large-v3-turbo", false, &dirs, &AccuracyProfile::default(), &EN).unwrap();
         assert_eq!((forced.0, forced.3), ("large-v3-turbo", true));
-        assert!(choose_accuracy_model("off", true, &dirs, &empty).is_none());
-        assert!(choose_accuracy_model("base.en", true, &dirs, &empty).is_none()); // not an accuracy model
+        assert!(choose_accuracy_model("off", true, &dirs, &empty, &EN).is_none());
+        assert!(choose_accuracy_model("base.en", true, &dirs, &empty, &EN).is_none()); // not an accuracy model
+
+        // French sermons: the English Small can't be used; the multilingual one is, once downloaded.
+        let fr = [Lang::En, Lang::Fr];
+        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &empty, &fr)), Some("large-v3-turbo"));
+        assert!(choose_accuracy_model("small.en", false, &dirs, &empty, &fr).is_none());
+        std::fs::write(dir.join("ggml-small-q5_1.bin"), b"x").unwrap();
+        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &empty, &fr)), Some("small"));
+        assert_eq!(id(choose_accuracy_model("small.en", false, &dirs, &empty, &fr)), Some("small"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

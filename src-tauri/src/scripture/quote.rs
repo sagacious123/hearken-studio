@@ -9,14 +9,21 @@
 //! quote is absorbed instead of splitting it. Words are stemmed, with KJV "-eth"/"-est" endings
 //! folded so "believeth" meets "believes". Short phrases found in many verses ("and it came to
 //! pass", "the word of God") are dropped as generic. Runs only on finals, off the partial path.
+//!
+//! Each preaching language is matched against the translations in that language, with its own
+//! stemmer and little words; accents are ignored ("eternel" meets "Éternel").
 
 use std::collections::HashMap;
 use std::collections::HashSet;
 
 use anyhow::Result;
-use rust_stemmers::{Algorithm, Stemmer};
+use rust_stemmers::Stemmer;
 
-use super::{fuzzy, BibleDb, ScriptureRef};
+use super::{
+    fuzzy,
+    lang::{fold, Lang},
+    BibleDb, ScriptureRef,
+};
 
 /// ≤ 64 so a verse's coverage of the transcript fits in a `u64` mask.
 const TAIL_WORDS: usize = 40;
@@ -53,14 +60,6 @@ const ALTERNATIVE_RATIO: f32 = 0.85;
 const MIN_SCORE: f32 = 0.6;
 pub const MAX_HITS: usize = 3;
 
-const STOPWORDS: &[&str] = &[
-    "the", "and", "of", "to", "a", "in", "that", "is", "for", "it", "as", "was", "with", "be", "his", "he", "i",
-    "you", "on", "by", "not", "but", "are", "this", "they", "have", "from", "or", "at", "all", "we", "my", "me",
-    "your", "so", "will", "unto", "thee", "thou", "thy", "shall", "him", "them", "which", "there", "what", "when",
-    "who", "were", "their", "an", "if", "our", "us", "do", "no", "hath", "ye", "then", "said", "into", "up", "out",
-    "now", "also", "been", "had", "has", "her", "she", "its", "these", "those", "would", "could", "let", "like",
-    "just", "very", "okay", "amen", "can", "say", "says", "saying", "know", "going", "get", "got", "one",
-];
 
 #[derive(Debug, Clone)]
 pub struct QuoteHit {
@@ -84,21 +83,34 @@ fn split(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
 }
 
-fn token(stemmer: &Stemmer, word: &str) -> Token {
+/// A language's stemmer and little words.
+pub struct Lexicon {
+    lang: Lang,
+    stemmer: Stemmer,
+}
+
+impl Lexicon {
+    pub fn new(lang: Lang) -> Self {
+        Self { lang, stemmer: Stemmer::create(lang.stemmer()) }
+    }
+}
+
+fn token(lex: &Lexicon, word: &str) -> Token {
+    let word = fold(word);
     // "believeth"/"lovest" → "believe"/"love", which then stem like "believes"/"loved".
     // Applied to transcript and verse alike, so a wrong fold ("priest") can't cause a mismatch.
-    let folded;
-    let w = if word.len() >= 6 && (word.ends_with("eth") || word.ends_with("est")) {
-        folded = format!("{}e", &word[..word.len() - 3]);
-        folded.as_str()
+    let kjv;
+    let w = if lex.lang == Lang::En && word.len() >= 6 && (word.ends_with("eth") || word.ends_with("est")) {
+        kjv = format!("{}e", &word[..word.len() - 3]);
+        kjv.as_str()
     } else {
-        word
+        word.as_str()
     };
     Token {
-        word: word.to_string(),
-        stem: stemmer.stem(w).into_owned(),
-        sound: fuzzy::sound(word),
-        content: word.len() > 2 && !STOPWORDS.contains(&word),
+        stem: lex.stemmer.stem(w).into_owned(),
+        sound: fuzzy::sound(&word),
+        content: word.len() > 2 && !lex.lang.stopwords().contains(&word.as_str()),
+        word,
     }
 }
 
@@ -266,20 +278,30 @@ fn score(a: &Alignment) -> f32 {
     (0.55 + 0.25 * length + 0.2 * coverage) * (0.7 + 0.3 * accuracy)
 }
 
-/// Up to `MAX_HITS` verses the transcript appears to quote, best first.
+/// Up to `MAX_HITS` verses an English transcript appears to quote, best first.
+#[cfg(test)]
 pub fn find_quotes(db: &BibleDb, transcript: &str) -> Result<Vec<QuoteHit>> {
-    let stemmer = Stemmer::create(Algorithm::English);
+    find_quotes_in(db, transcript, Lang::En)
+}
+
+/// Up to `MAX_HITS` verses the transcript appears to quote, in the translations in `lang`.
+pub fn find_quotes_in(db: &BibleDb, transcript: &str, lang: Lang) -> Result<Vec<QuoteHit>> {
+    let lex = Lexicon::new(lang);
     let all = split(transcript);
     let words = &all[all.len().saturating_sub(TAIL_WORDS)..];
-    let spoken: Vec<Token> = words.iter().map(|w| token(&stemmer, w)).collect();
+    let spoken: Vec<Token> = words.iter().map(|w| token(&lex, w)).collect();
     let Some(query) = fts_query(words, &spoken) else {
         return Ok(Vec::new());
+    };
+    let candidates = match lang {
+        Lang::En => db.search(None, &query, CANDIDATES)?,
+        _ => db.search_language(lang.name(), &query, CANDIDATES)?,
     };
 
     // Best alignment per verse across all translations; `order` keeps BM25 rank as tie-break.
     let mut best: HashMap<String, (usize, ScriptureRef, Alignment, f32)> = HashMap::new();
-    for (order, c) in db.search(None, &query, CANDIDATES)?.into_iter().enumerate() {
-        let verse: Vec<Token> = split(&c.text).iter().map(|w| token(&stemmer, w)).collect();
+    for (order, c) in candidates.into_iter().enumerate() {
+        let verse: Vec<Token> = split(&c.text).iter().map(|w| token(&lex, w)).collect();
         let a = align(&spoken, &verse);
         if !a.strong() {
             continue;
@@ -329,8 +351,13 @@ pub struct Passage {
 }
 
 impl Passage {
+    #[cfg(test)]
     pub fn new<S: AsRef<str>>(lines: &[S]) -> Self {
-        let stemmer = Stemmer::create(Algorithm::English);
+        Self::in_lang(lines, Lang::En)
+    }
+
+    pub fn in_lang<S: AsRef<str>>(lines: &[S], lang: Lang) -> Self {
+        let lex = Lexicon::new(lang);
         let (mut tokens, mut ends) = (Vec::new(), Vec::new());
         for (li, line) in lines.iter().enumerate() {
             let line = line.as_ref();
@@ -340,7 +367,7 @@ impl Passage {
                 if c.is_alphanumeric() {
                     start.get_or_insert(bi);
                 } else if let Some(s) = start.take() {
-                    tokens.push(token(&stemmer, &line[s..bi].to_lowercase()));
+                    tokens.push(token(&lex, &line[s..bi]));
                     ends.push((li, line[..bi].encode_utf16().count()));
                 }
             }
@@ -366,11 +393,16 @@ pub struct Spoken {
 
 impl Spoken {
     /// The last `tail` (≤ 64) words of `text`.
+    #[cfg(test)]
     pub fn new(text: &str, tail: usize) -> Self {
-        let stemmer = Stemmer::create(Algorithm::English);
+        Self::in_lang(text, tail, Lang::En)
+    }
+
+    pub fn in_lang(text: &str, tail: usize, lang: Lang) -> Self {
+        let lex = Lexicon::new(lang);
         let all = split(text);
         let words = &all[all.len().saturating_sub(tail.min(64))..];
-        Self { tokens: words.iter().map(|w| token(&stemmer, w)).collect() }
+        Self { tokens: words.iter().map(|w| token(&lex, w)).collect() }
     }
 
     pub fn len(&self) -> usize {
@@ -431,7 +463,7 @@ mod tests {
     use std::time::Instant;
 
     fn stems(text: &str) -> Vec<String> {
-        let s = Stemmer::create(Algorithm::English);
+        let s = Lexicon::new(Lang::En);
         split(text).iter().map(|w| token(&s, w).stem).collect()
     }
 
@@ -444,7 +476,7 @@ mod tests {
 
     #[test]
     fn query_skips_stopword_only_windows() {
-        let s = Stemmer::create(Algorithm::English);
+        let s = Lexicon::new(Lang::En);
         let words = split("and it was the lord is my shepherd");
         let tokens: Vec<Token> = words.iter().map(|w| token(&s, w)).collect();
         let q = fts_query(&words, &tokens).unwrap();
@@ -455,7 +487,7 @@ mod tests {
 
     #[test]
     fn alignment_tolerates_a_changed_word() {
-        let s = Stemmer::create(Algorithm::English);
+        let s = Lexicon::new(Lang::En);
         let t = |x: &str| split(x).iter().map(|w| token(&s, w)).collect::<Vec<_>>();
         let a = align(
             &t("he said whoever believes on him should not perish"),
@@ -467,8 +499,64 @@ mod tests {
     }
 
     #[test]
+    fn french_and_spanish_quotes_align() {
+        let t = |lex: &Lexicon, x: &str| split(x).iter().map(|w| token(lex, w)).collect::<Vec<_>>();
+        let fr = Lexicon::new(Lang::Fr);
+        // Accents left out by the speech model.
+        let a = align(
+            &t(&fr, "car dieu a tant aime le monde qu il a donne son fils"),
+            &t(&fr, "Car Dieu a tant aimé le monde qu'il a donné son Fils unique, afin que quiconque croit en lui ne périsse point"),
+        );
+        assert!(a.strong());
+        assert_eq!(a.errors, 0);
+        let es = Lexicon::new(Lang::Es);
+        let a = align(&t(&es, "porque de tal manera amó Dios al mundo"), &t(&es, "Porque de tal manera amó Dios al mundo, que ha dado á su Hijo unigénito"));
+        assert!(a.strong());
+        // Little words alone don't make a quote.
+        let a = align(&t(&fr, "et il est dans la maison de"), &t(&fr, "et il est dans la maison de son père"));
+        assert!(!a.strong());
+    }
+
+    /// Downloads Louis Segond and Reina-Valera into a scratch library:
+    /// `cargo test quotes_in_french_and_spanish -- --ignored --nocapture`
+    #[test]
+    #[ignore = "downloads from eBible.org"]
+    fn quotes_in_french_and_spanish() {
+        use crate::scripture::{db::set_library_path, library};
+        let lib = std::env::temp_dir().join(format!("hk-quotes-{}.db", std::process::id()));
+        library::ensure(&lib).unwrap();
+        for code in ["LSG", "RV1909"] {
+            library::install(&lib, library::entry(code).unwrap(), |_| {}).unwrap();
+        }
+        set_library_path(lib.clone());
+        let db = BibleDb::open(&Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/bible.db")).unwrap();
+        let top = |text: &str, lang: Lang| {
+            let hits = find_quotes_in(&db, text, lang).unwrap();
+            eprintln!("{text:?} → {:?}", hits.iter().map(|h| (h.reference.key(), (h.score * 100.0).round())).collect::<Vec<_>>());
+            hits.into_iter().next().map(|h| h.reference.key())
+        };
+        let some = |k: &str| Some(k.to_string());
+        assert_eq!(top("comme dit le psalmiste, l'Éternel est mon berger, je ne manquerai de rien", Lang::Fr), some("19.23.1"));
+        assert_eq!(top("car Dieu a tant aimé le monde qu'il a donné son fils unique", Lang::Fr), some("43.3.16"));
+        assert_eq!(top("je puis tout par celui qui me fortifie", Lang::Fr), some("50.4.13"));
+        assert_eq!(top("l'eternel est mon berger je ne manquerai de rien", Lang::Fr), some("19.23.1"), "without accents");
+        assert_eq!(top("Jehová es mi pastor, nada me faltará", Lang::Es), some("19.23.1"));
+        assert_eq!(top("porque de tal manera amó Dios al mundo", Lang::Es), some("43.3.16"));
+        assert_eq!(top("todo lo puedo en Cristo que me fortalece", Lang::Es), some("50.4.13"));
+        for (talk, lang) in [
+            ("bonjour à tous et bienvenue dans la maison de Dieu", Lang::Fr),
+            ("nous allons maintenant prier ensemble", Lang::Fr),
+            ("buenos días hermanos, bienvenidos a la casa de Dios", Lang::Es),
+            ("vamos a orar todos juntos", Lang::Es),
+        ] {
+            assert_eq!(top(talk, lang), None, "{talk}");
+        }
+        let _ = std::fs::remove_file(&lib);
+    }
+
+    #[test]
     fn sound_alikes_are_similar_and_unrelated_words_are_not() {
-        let s = Stemmer::create(Algorithm::English);
+        let s = Lexicon::new(Lang::En);
         let p = |a: &str, b: &str| pair(&token(&s, a), &token(&s, b));
         for (heard, said) in [("seizing", "ceasing"), ("parish", "perish"), ("shepard", "shepherd"),
                               ("forgotten", "begotten"), ("whoever", "whosoever")] {

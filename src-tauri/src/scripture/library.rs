@@ -139,7 +139,7 @@ fn book_id(code: &str) -> Option<u8> {
 
 /// Book names in each translation's language (from eBible's BookNames.xml), bundled so a
 /// download needs only the text.
-fn book_names(source: &str) -> Vec<String> {
+pub(crate) fn book_names(source: &str) -> Vec<String> {
     static JSON: &str = include_str!("../../assets/booknames.json");
     serde_json::from_str::<std::collections::HashMap<String, Vec<String>>>(JSON).ok().and_then(|mut m| m.remove(source)).unwrap_or_default()
 }
@@ -191,7 +191,16 @@ CREATE TABLE IF NOT EXISTS book_names (
   book_id        INTEGER NOT NULL,
   name           TEXT NOT NULL,
   PRIMARY KEY (translation_id, book_id)
+);
+-- Word search, for verses quoted aloud in the translation's language. Accents are ignored, as
+-- speech recognition doesn't always write them.
+CREATE VIRTUAL TABLE IF NOT EXISTS verses_fts USING fts5(
+  text, content = 'verses', content_rowid = 'id', tokenize = 'unicode61 remove_diacritics 2'
 );";
+
+/// Bumped when the library's layout changes; `ensure` brings older ones up to date.
+/// 1: word search over downloaded translations.
+const VERSION: i64 = 1;
 
 fn open(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path).with_context(|| format!("opening the Bible library at {}", path.display()))?;
@@ -200,12 +209,24 @@ fn open(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Create the library database if needed, so readers can attach it from the start.
+/// Create the library database if needed, so readers can attach it from the start, and index
+/// translations downloaded before word search existed (a second or two each, once).
 pub fn ensure(path: &Path) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    open(path).map(drop)
+    let conn = open(path)?;
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version < VERSION {
+        conn.execute_batch(&format!("INSERT INTO verses_fts(verses_fts) VALUES ('rebuild'); PRAGMA user_version = {VERSION};"))?;
+    }
+    Ok(())
+}
+
+/// Take a translation's verses out of the word search (before they're deleted).
+fn unindex(tx: &rusqlite::Transaction, id: i64) -> Result<()> {
+    tx.execute("INSERT INTO verses_fts(verses_fts, rowid, text) SELECT 'delete', id, text FROM verses WHERE translation_id = ?1", [id])?;
+    Ok(())
 }
 
 /// Codes of the translations already downloaded.
@@ -226,6 +247,7 @@ pub fn import(path: &Path, e: &CatalogEntry, verses: &[Verse]) -> Result<()> {
     let tx = conn.transaction()?;
     let old: Option<i64> = tx.query_row("SELECT id FROM translations WHERE code = ?1", [e.code], |r| r.get(0)).ok();
     if let Some(id) = old {
+        unindex(&tx, id)?;
         tx.execute("DELETE FROM verses WHERE translation_id = ?1", [id])?;
         tx.execute("DELETE FROM book_names WHERE translation_id = ?1", [id])?;
         tx.execute("DELETE FROM translations WHERE id = ?1", [id])?;
@@ -246,6 +268,7 @@ pub fn import(path: &Path, e: &CatalogEntry, verses: &[Verse]) -> Result<()> {
             name.execute(params![id, i as u8 + 1, n])?;
         }
     }
+    tx.execute("INSERT INTO verses_fts(rowid, text) SELECT id, text FROM verses WHERE translation_id = ?1", [id])?;
     tx.commit()?;
     Ok(())
 }
@@ -254,6 +277,7 @@ pub fn remove(path: &Path, code: &str) -> Result<()> {
     let mut conn = open(path)?;
     let tx = conn.transaction()?;
     let id: i64 = tx.query_row("SELECT id FROM translations WHERE code = ?1", [code], |r| r.get(0)).context("that translation isn't downloaded")?;
+    unindex(&tx, id)?;
     tx.execute("DELETE FROM verses WHERE translation_id = ?1", [id])?;
     tx.execute("DELETE FROM book_names WHERE translation_id = ?1", [id])?;
     tx.execute("DELETE FROM translations WHERE id = ?1", [id])?;
@@ -368,11 +392,16 @@ mod tests {
             assert_eq!(db.passage("KJV", 43, 3, 16, 16).unwrap().len(), 1);
             assert_eq!(db.book_name("YOR", 43).as_deref(), Some("Johanu"));
             assert_eq!(db.book_name("KJV", 43), None);
-            // Searching a downloaded translation falls back to the bundled ones.
+            // A downloaded translation's own words are searched (accents optional), then the
+            // bundled ones when it has none of them.
+            let hits = db.search(Some("YOR"), "\"olorun\" \"araye\"", 3).unwrap();
+            assert_eq!(hits.first().map(|h| (h.translation.as_str(), h.reference.key())), Some(("YOR", "43.3.16".into())));
+            assert_eq!(db.search_language("Yoruba", "\"Ọlọ́run\"", 5).unwrap().len(), 2);
             assert!(!db.search(Some("YOR"), "\"loved\" \"world\"", 3).unwrap().is_empty());
 
             remove(&lib, "YOR").unwrap();
             assert!(db.passage("YOR", 43, 3, 16, 16).is_err(), "removed translations disappear at once");
+            assert!(db.search_language("Yoruba", "\"olorun\"", 5).unwrap().is_empty(), "and from the word search");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

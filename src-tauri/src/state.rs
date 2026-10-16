@@ -14,7 +14,7 @@ use crate::{
     history::History,
     pipeline::PipelineHandle,
     presentation::Presenter,
-    scripture::{self, parser, parser::ReferenceParser, BibleDb, ScriptureRef, Slide, Versification},
+    scripture::{self, lang::Lang, parser, parser::ReferenceParser, BibleDb, ScriptureRef, Slide, Versification},
     share::Share,
     songs::SongLibrary,
 };
@@ -85,6 +85,19 @@ pub struct Settings {
     pub vocabulary: String,
     /// Extra screens beside the main output (up to three).
     pub screens: Vec<ScreenConfig>,
+    /// Languages preached, as codes ("en", "fr", "es"). Listening understands each of them.
+    pub languages: Vec<String>,
+    /// Language of Hearken's menus and buttons ("en", "fr", "es").
+    pub ui_language: String,
+    /// The first-run screens have been seen.
+    pub onboarded: bool,
+}
+
+impl Settings {
+    /// The preaching languages (English when none are set).
+    pub fn langs(&self) -> Vec<Lang> {
+        Lang::list(&self.languages)
+    }
 }
 
 impl Default for Settings {
@@ -111,6 +124,9 @@ impl Default for Settings {
             accuracy_model: "auto".into(),
             vocabulary: String::new(),
             screens: Vec::new(),
+            languages: vec!["en".into()],
+            ui_language: "en".into(),
+            onboarded: false,
         }
     }
 }
@@ -169,8 +185,9 @@ impl Plan {
     pub fn parse(text: &str, v11n: &Versification) -> Self {
         let mut refs: Vec<ScriptureRef> = Vec::new();
         for line in text.lines() {
-            // Fresh parser per line: notes shouldn't chain "verse 18" across unrelated lines.
-            for r in ReferenceParser::new().parse(line, true, v11n) {
+            // Fresh parser per line: notes shouldn't chain "verse 18" across unrelated lines. The
+            // notes may be in any language.
+            for r in ReferenceParser::typed().parse(line, true, v11n) {
                 if !refs.contains(&r.reference) {
                     refs.push(r.reference);
                 }
@@ -235,9 +252,15 @@ impl AppState {
         scripture::db::set_library_path(paths.library());
         let bible = BibleDb::open(&paths.bible_db)?;
         let versification = Arc::new(bible.versification()?);
-        parser::warm_up();
 
-        let mut settings: Settings = read_json(&paths.settings()).unwrap_or_default();
+        let saved: Option<serde_json::Value> = read_json(&paths.settings());
+        let mut settings: Settings = saved.clone().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+        // Set up before the first-run screens existed.
+        if saved.as_ref().is_some_and(|v| v.get("onboarded").is_none()) {
+            settings.onboarded = true;
+        }
+        parser::warm_up(&settings.langs());
+        parser::warm_up(&Lang::ALL); // search and the sermon plan
         if !bible.translations().iter().any(|t| t.code.eq_ignore_ascii_case(&settings.translation)) {
             settings.translation = bible.translations()[0].code.clone(); // a removed download
         }
