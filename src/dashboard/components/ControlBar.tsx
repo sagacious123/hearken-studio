@@ -384,7 +384,7 @@ function SettingsMenu({
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium hover:bg-white/[.06] ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
+        className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold hover:bg-white/[.06] ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
         aria-expanded={open}
         aria-label="Settings"
         title="Settings"

@@ -34,7 +34,7 @@ export function Sidebar() {
           <button
             key={t}
             onClick={() => choose(t)}
-            className={`border-b-2 ${t === tab ? "border-amber-500 font-medium text-zinc-100" : "border-transparent font-light text-zinc-500 hover:text-zinc-300"}`}
+            className={`border-b-2 ${t === tab ? "border-amber-500 font-medium text-zinc-100" : "border-transparent font-medium text-zinc-500 hover:text-zinc-300"}`}
           >
             {t}
           </button>

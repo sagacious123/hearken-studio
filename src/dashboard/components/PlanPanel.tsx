@@ -41,8 +41,9 @@ export function PlanPanel() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex-none space-y-2 border-b border-zinc-800 p-3">
-        <p className="text-xs text-zinc-500">
-          Paste the pastor's notes or verse list. Every reference is lined up below, and gets a confidence boost when it's spoken.
+        <p className="text-xs text-zinc-500 font-normal">
+          Paste the pastor's notes or verse list. Every reference is lined up
+          below, and gets a confidence boost when it's spoken.
         </p>
         <textarea
           value={text}
@@ -53,8 +54,10 @@ export function PlanPanel() {
           onBlur={save}
           rows={3}
           spellCheck={false}
-          placeholder={"Intro: John 3:16\n1. Rom 8:28-30\n2. Psalm 23\nClose: Philippians 4:13"}
-          className="w-full resize-y rounded-lg bg-white/[.02] p-2 text-sm font-light outline-none ring-1 ring-zinc-800 focus:ring-amber-500"
+          placeholder={
+            "Intro: John 3:16\n1. Rom 8:28-30\n2. Psalm 23\nClose: Philippians 4:13"
+          }
+          className="w-full resize-y rounded-lg bg-white/[.02] p-2 text-sm font-medium outline-none ring-1 ring-zinc-800 focus:ring-amber-500"
         />
         <div className="flex items-center gap-2">
           <button
@@ -82,7 +85,9 @@ export function PlanPanel() {
         {error && <p className="text-xs text-red-400">{error}</p>}
       </div>
       <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-        {slides.length === 0 && <li className="text-sm text-zinc-500">No references yet.</li>}
+        {slides.length === 0 && (
+          <li className="text-sm text-zinc-500">No references yet.</li>
+        )}
         {slides.map((s, i) => (
           <SlideRow key={s.id + i} slide={s} />
         ))}

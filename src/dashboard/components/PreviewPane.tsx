@@ -19,19 +19,36 @@ export function Monitors() {
   const theme = useMemo(() => parseTheme(live?.theme), [live?.theme]);
   const previewTheme = draftTheme ?? theme;
   const onAir = !!live?.slide && !live.blackout;
-  const status = live?.blackout ? "BLACKED OUT" : live?.slide ? "ON SCREEN" : "CLEAR";
+  const status = live?.blackout
+    ? "BLACKED OUT"
+    : live?.slide
+      ? "ON SCREEN"
+      : "CLEAR";
 
   return (
     // Capped so the monitors leave room for the transcript and plan on very wide screens.
-    <div data-preview-column className="mx-auto grid w-full min-w-0 max-w-[calc(149vh+130px)] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
+    <div
+      data-preview-column
+      className="mx-auto grid w-full min-w-0 max-w-[calc(149vh+130px)] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3"
+    >
       <div className="min-w-0 space-y-2">
         <MonitorLabel title="Preview">
-          <span className="truncate text-xs font-light text-zinc-500">{preview ? `${preview.label} · ${preview.translation}` : "Nothing selected"}</span>
+          <span className="truncate text-xs font-semibold text-zinc-500">
+            {preview
+              ? `${preview.label} · ${preview.translation}`
+              : "Nothing selected"}
+          </span>
         </MonitorLabel>
         <DraftBar />
-        <StageBox ring={`ring-1 ${draftTheme ? "ring-amber-500" : "ring-zinc-800"}`}>
+        <StageBox
+          ring={`ring-1 ${draftTheme ? "ring-amber-500" : "ring-zinc-800"}`}
+        >
           <Stage background={previewTheme.background.color}>
-            <SlideView slide={preview ?? (draftTheme ? SAMPLE_SLIDE : null)} theme={previewTheme} blackout={false} />
+            <SlideView
+              slide={preview ?? (draftTheme ? SAMPLE_SLIDE : null)}
+              theme={previewTheme}
+              blackout={false}
+            />
           </Stage>
         </StageBox>
       </div>
@@ -50,9 +67,15 @@ export function Monitors() {
 
       <div className="min-w-0 space-y-2">
         <MonitorLabel title="Live">
-          <span className={`mr-auto flex items-center gap-1.5 text-[11px] font-bold tracking-[0.12em] ${onAir ? "text-red-400" : "text-zinc-500"}`}>
-            {onAir && <span className="h-1.5 w-1.5 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444]" />}
-            <span className="hidden whitespace-nowrap min-[1300px]:inline">{status}</span>
+          <span
+            className={`mr-auto flex items-center gap-1.5 text-[11px] font-bold tracking-[0.12em] ${onAir ? "text-red-400" : "text-zinc-500"}`}
+          >
+            {onAir && (
+              <span className="h-1.5 w-1.5 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444]" />
+            )}
+            <span className="hidden whitespace-nowrap min-[1300px]:inline">
+              {status}
+            </span>
           </span>
           <span className="flex flex-none gap-1">
             <Btn onClick={() => api.stepVerse(-1)} title="Previous verse (←)">
@@ -61,17 +84,36 @@ export function Monitors() {
             <Btn onClick={() => api.stepVerse(1)} title="Next verse (→)">
               <span className="hidden min-[1300px]:inline">Verse </span>▶
             </Btn>
-            <Btn onClick={() => api.setBlackout(!live?.blackout)} title="Black out the screen (B)" danger>
+            <Btn
+              onClick={() => api.setBlackout(!live?.blackout)}
+              title="Black out the screen (B)"
+              danger
+            >
               {live?.blackout ? "Unblack" : "Black"}
             </Btn>
-            <Btn onClick={() => api.clearOutput()} title="Remove the verse from the screen (Esc)">
+            <Btn
+              onClick={() => api.clearOutput()}
+              title="Remove the verse from the screen (Esc)"
+            >
               Clear
             </Btn>
           </span>
         </MonitorLabel>
-        <StageBox ring={onAir ? "ring-2 ring-red-600 shadow-[0_0_40px_-14px_rgba(229,72,77,.6)]" : "ring-1 ring-zinc-800"}>
+        <StageBox
+          ring={
+            onAir
+              ? "ring-2 ring-red-600 shadow-[0_0_40px_-14px_rgba(229,72,77,.6)]"
+              : "ring-1 ring-zinc-800"
+          }
+        >
           <Stage background={theme.background.color}>
-            <SlideView slide={live?.slide ?? null} theme={theme} blackout={live?.blackout ?? false} reading={live?.reading} qr={live?.qr} />
+            <SlideView
+              slide={live?.slide ?? null}
+              theme={theme}
+              blackout={live?.blackout ?? false}
+              reading={live?.reading}
+              qr={live?.qr}
+            />
           </Stage>
         </StageBox>
       </div>
@@ -79,10 +121,18 @@ export function Monitors() {
   );
 }
 
-function MonitorLabel({ title, children }: { title: string; children: React.ReactNode }) {
+function MonitorLabel({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex h-7 items-center justify-between gap-3">
-      <h3 className="flex-none font-display text-[13px] font-semibold uppercase tracking-[0.2em] text-amber-200">{title}</h3>
+      <h3 className="flex-none text-[12px] font-bold uppercase tracking-[0.14em] text-amber-200">
+        {title}
+      </h3>
       {children}
     </div>
   );
@@ -91,7 +141,10 @@ function MonitorLabel({ title, children }: { title: string; children: React.Reac
 /** Finding a passage by hand, and stepping, blacking out or clearing what's live. */
 export function Finder() {
   return (
-    <div data-preview-column className="flex min-w-0 flex-wrap items-start gap-2">
+    <div
+      data-preview-column
+      className="flex min-w-0 flex-wrap items-start gap-2"
+    >
       <div className="min-w-[16rem] flex-[1_1_18rem]">
         <SearchBox />
       </div>
@@ -107,20 +160,38 @@ export function Finder() {
  * follows from it: with aspect-ratio on a flex item, WebKit sized these boxes from their height
  * instead and made them wider than the column.
  */
-function StageBox({ ring, children }: { ring: string; children: React.ReactNode }) {
+function StageBox({
+  ring,
+  children,
+}: {
+  ring: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className={`relative aspect-video w-full overflow-hidden rounded-lg ${ring}`}>
+    <div
+      className={`relative aspect-video w-full overflow-hidden rounded-lg ${ring}`}
+    >
       <div className="absolute inset-0">{children}</div>
     </div>
   );
 }
 
-function Btn({ onClick, children, title, danger }: { onClick: () => void; children: React.ReactNode; title?: string; danger?: boolean }) {
+function Btn({
+  onClick,
+  children,
+  title,
+  danger,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+  title?: string;
+  danger?: boolean;
+}) {
   return (
     <button
       onClick={onClick}
       title={title}
-      className={`h-7 rounded-md border px-2.5 text-xs font-medium ${danger ? "border-red-500/50 text-red-300 hover:bg-red-500/10" : "border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-zinc-100"}`}
+      className={`h-7 rounded-md border px-2.5 text-xs font-semibold ${danger ? "border-red-500/50 text-red-300 hover:bg-red-500/10" : "border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-zinc-100"}`}
     >
       {children}
     </button>
@@ -144,12 +215,17 @@ function SearchBox() {
       return;
     }
     const id = setTimeout(() => {
-      api.searchScripture(query, translation).then(setResult).catch(console.error);
+      api
+        .searchScripture(query, translation)
+        .then(setResult)
+        .catch(console.error);
     }, 80);
     return () => clearTimeout(id);
   }, [query, translation]);
 
-  const items: Slide[] = result ? [...(result.reference ? [result.reference] : []), ...result.hits] : [];
+  const items: Slide[] = result
+    ? [...(result.reference ? [result.reference] : []), ...result.hits]
+    : [];
   const byMeaning = result?.meaning ?? [];
   const pick = (s: Slide) => {
     setPreview(s);
@@ -186,18 +262,27 @@ function SearchBox() {
         }}
         onBlur={() => setArmed(null)}
         aria-label="Search scripture"
-        placeholder={ready ? "Press Enter again to go live" : "Search: “jn 3 16”, “love is patient” or “don't worry about tomorrow”"}
-        className={`h-10 w-full rounded-lg bg-white/[.02] px-3.5 text-sm font-light outline-none ring-1 ring-zinc-800 focus:ring-amber-500 ${ready ? "placeholder:text-amber-300" : "placeholder:text-zinc-500"}`}
+        placeholder={
+          ready
+            ? "Press Enter again to go live"
+            : "Search: “jn 3 16”, “love is patient” or “don't worry about tomorrow”"
+        }
+        className={`h-10 w-full rounded-lg bg-white/[.02] px-3.5 text-sm font-medium outline-none ring-1 ring-zinc-800 focus:ring-amber-500 ${ready ? "placeholder:text-amber-300" : "placeholder:text-zinc-500"}`}
       />
       {result && (
         <ul className="absolute inset-x-3 top-full z-10 mt-1 max-h-80 overflow-y-auto rounded-md bg-zinc-900 shadow-xl ring-1 ring-zinc-700">
-          {items.length === 0 && byMeaning.length === 0 && <li className="px-3 py-2 text-sm text-zinc-500">No matches</li>}
+          {items.length === 0 && byMeaning.length === 0 && (
+            <li className="px-3 py-2 text-sm text-zinc-500">No matches</li>
+          )}
           {items.map((s, i) => (
             <SearchItem key={s.id + i} slide={s} onPick={pick} />
           ))}
           {byMeaning.length > 0 && (
             <>
-              <li className="border-t border-zinc-800 px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-sky-400" title="Verses that say the same thing in other words">
+              <li
+                className="border-t border-zinc-800 px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-sky-400"
+                title="Verses that say the same thing in other words"
+              >
                 By meaning
               </li>
               {byMeaning.map((s, i) => (
@@ -205,17 +290,29 @@ function SearchBox() {
               ))}
             </>
           )}
-          <li className="px-3 py-1 text-right font-mono text-[10px] text-zinc-600">{result.elapsedMs.toFixed(2)} ms</li>
+          <li className="px-3 py-1 text-right font-mono text-[10px] text-zinc-600">
+            {result.elapsedMs.toFixed(2)} ms
+          </li>
         </ul>
       )}
     </div>
   );
 }
 
-function SearchItem({ slide, onPick }: { slide: Slide; onPick: (s: Slide) => void }) {
+function SearchItem({
+  slide,
+  onPick,
+}: {
+  slide: Slide;
+  onPick: (s: Slide) => void;
+}) {
   return (
-    <li onClick={() => onPick(slide)} className="cursor-pointer px-3 py-2 text-sm hover:bg-zinc-800">
-      <span className="font-semibold text-amber-400">{slide.label}</span> <span className="text-zinc-400">{slide.verses[0]?.text}</span>
+    <li
+      onClick={() => onPick(slide)}
+      className="cursor-pointer px-3 py-2 text-sm hover:bg-zinc-800"
+    >
+      <span className="font-semibold text-amber-400">{slide.label}</span>{" "}
+      <span className="text-zinc-400">{slide.verses[0]?.text}</span>
     </li>
   );
 }

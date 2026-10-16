@@ -18,10 +18,25 @@ const cleanName = (raw: string) =>
     .replace(/-+$/, "") || "hearken";
 
 const NAME_STATUS = {
-  checking: { tone: "text-zinc-400", text: () => "Checking the name on the network…" },
-  announced: { tone: "text-emerald-400", text: (url: string) => `✓ Phones on this Wi-Fi can open ${url.replace("http://", "")}` },
-  conflict: { tone: "text-amber-400", text: (url: string) => `Another device on this network already uses ${url.replace("http://", "")}. Choose a different name.` },
-  failed: { tone: "text-amber-400", text: () => "Couldn't announce the name; phones can use the number address below." },
+  checking: {
+    tone: "text-zinc-400",
+    text: () => "Checking the name on the network…",
+  },
+  announced: {
+    tone: "text-emerald-400",
+    text: (url: string) =>
+      `✓ Phones on this Wi-Fi can open ${url.replace("http://", "")}`,
+  },
+  conflict: {
+    tone: "text-amber-400",
+    text: (url: string) =>
+      `Another device on this network already uses ${url.replace("http://", "")}. Choose a different name.`,
+  },
+  failed: {
+    tone: "text-amber-400",
+    text: () =>
+      "Couldn't announce the name; phones can use the number address below.",
+  },
 } as const;
 
 export function ShareButton() {
@@ -38,19 +53,31 @@ export function ShareButton() {
   useEffect(() => setName(savedName), [savedName]);
 
   useEffect(() => {
-    if (open) api.getShareInfo().then(setInfo).catch((e) => setError(String(e)));
+    if (open)
+      api
+        .getShareInfo()
+        .then(setInfo)
+        .catch((e) => setError(String(e)));
   }, [open, enabled, savedName]);
   // The name is checked on the network for a second or two after sharing starts.
   useEffect(() => {
     if (!open || info?.nameStatus !== "checking" || !info.enabled) return;
-    const id = setTimeout(() => void api.getShareInfo().then(setInfo).catch(() => {}), 700);
+    const id = setTimeout(
+      () =>
+        void api
+          .getShareInfo()
+          .then(setInfo)
+          .catch(() => {}),
+      700,
+    );
     return () => clearTimeout(id);
   }, [open, info]);
 
   const saveName = () => {
     const clean = cleanName(name);
     setName(clean);
-    if (clean !== savedName) void saveSettings({ shareName: clean }).catch((e) => setError(String(e)));
+    if (clean !== savedName)
+      void saveSettings({ shareName: clean }).catch((e) => setError(String(e)));
   };
 
   const toggle = async () => {
@@ -67,20 +94,32 @@ export function ShareButton() {
     <div ref={rootRef} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className={`h-9 rounded-lg px-2 text-sm font-light hover:bg-white/[.06] min-[1300px]:px-3 ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
+        className={`h-9 rounded-lg px-2 text-xs font-bold hover:bg-white/[.06] min-[1300px]:px-3 ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
       >
-        Share{enabled && <span className="ml-1.5 inline-block h-1.5 w-1.5 -translate-y-px rounded-full bg-amber-500" />}
+        Share
+        {enabled && (
+          <span className="ml-1.5 inline-block h-1.5 w-1.5 -translate-y-px rounded-full bg-amber-500" />
+        )}
       </button>
       {open && (
         <div className="absolute right-0 top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[22rem] space-y-3 overflow-y-auto overscroll-contain rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
           <label className="flex items-center justify-between gap-3">
             <span>
               <span className="font-semibold">Share on the local network</span>
-              <span className="block text-xs text-zinc-400">Phones, livestream overlay and remote. No internet needed.</span>
+              <span className="block text-xs text-zinc-400">
+                Phones, livestream overlay and remote. No internet needed.
+              </span>
             </span>
-            <input type="checkbox" checked={enabled} onChange={toggle} className="h-4 w-4 accent-sky-500" />
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={toggle}
+              className="h-4 w-4 accent-sky-500"
+            />
           </label>
-          {(error || info?.error) && <p className="text-xs text-red-400">{error ?? info?.error}</p>}
+          {(error || info?.error) && (
+            <p className="text-xs text-red-400">{error ?? info?.error}</p>
+          )}
 
           <label className="block space-y-1">
             <span className="text-xs text-zinc-400">Network name</span>
@@ -90,7 +129,10 @@ export function ShareButton() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 onBlur={saveName}
-                onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
+                onKeyDown={(e) =>
+                  e.key === "Enter" &&
+                  (e.currentTarget as HTMLInputElement).blur()
+                }
                 spellCheck={false}
                 aria-label="Network name"
                 className="min-w-0 flex-1 bg-transparent px-0.5 py-1.5 font-mono text-sm text-zinc-100 outline-none"
@@ -98,18 +140,30 @@ export function ShareButton() {
               <span className="pr-2 font-mono text-zinc-500">.local</span>
             </span>
             {info?.enabled && (
-              <span className={`block text-xs ${NAME_STATUS[info.nameStatus].tone}`}>{NAME_STATUS[info.nameStatus].text(info.phoneUrl)}</span>
+              <span
+                className={`block text-xs ${NAME_STATUS[info.nameStatus].tone}`}
+              >
+                {NAME_STATUS[info.nameStatus].text(info.phoneUrl)}
+              </span>
             )}
           </label>
 
           {info?.enabled && (
             <>
               <div className="flex gap-3">
-                <div className="h-28 w-28 flex-none overflow-hidden rounded bg-white p-1 [&_svg]:h-full [&_svg]:w-full" dangerouslySetInnerHTML={{ __html: info.qrSvg }} />
+                <div
+                  className="h-28 w-28 flex-none overflow-hidden rounded bg-white p-1 [&_svg]:h-full [&_svg]:w-full"
+                  dangerouslySetInnerHTML={{ __html: info.qrSvg }}
+                />
                 <div className="min-w-0 space-y-1.5">
-                  <p className="text-xs text-zinc-400">Congregation: scan to follow the verses on their phone, in any translation and text size.</p>
+                  <p className="text-xs text-zinc-400">
+                    Congregation: scan to follow the verses on their phone, in
+                    any translation and text size.
+                  </p>
                   <button
-                    onClick={() => void api.showQr(!qrLive).catch((e) => setError(String(e)))}
+                    onClick={() =>
+                      void api.showQr(!qrLive).catch((e) => setError(String(e)))
+                    }
                     className={`rounded px-2 py-1 text-xs font-medium ${qrLive ? "bg-amber-600 hover:bg-amber-500" : "bg-zinc-800 hover:bg-zinc-700"}`}
                   >
                     {qrLive ? "Hide QR on screen" : "Show QR on screen"}
@@ -118,13 +172,29 @@ export function ShareButton() {
               </div>
               <Link label="Phones" url={info.phoneUrl} />
               <PhoneRecap />
-              <Link label="Livestream overlay" url={info.overlayUrl} hint="OBS/vMix: add a Browser source, 1920×1080. Add ?pos=top to move it up." />
-              <Link label="Remote" url={info.remoteUrl} hint={`Open on your phone and enter PIN ${info.pin}.`} />
+              <Link
+                label="Livestream overlay"
+                url={info.overlayUrl}
+                hint="OBS/vMix: add a Browser source, 1920×1080. Add ?pos=top to move it up."
+              />
+              <Link
+                label="Remote"
+                url={info.remoteUrl}
+                hint={`Open on your phone and enter PIN ${info.pin}.`}
+              />
               <div className="rounded-md bg-zinc-950 p-2 text-xs text-zinc-400 ring-1 ring-zinc-800">
-                Some Android phones can't open <span className="font-mono">.local</span> addresses. They can use{" "}
-                <span className="select-all font-mono text-sky-300">{info.ipUrl}</span> instead; the QR code always works.
+                Some Android phones can't open{" "}
+                <span className="font-mono">.local</span> addresses. They can
+                use{" "}
+                <span className="select-all font-mono text-sky-300">
+                  {info.ipUrl}
+                </span>{" "}
+                instead; the QR code always works.
               </div>
-              <p className="text-xs text-zinc-500">Devices must be on the same Wi-Fi. If they can't connect, allow Hearken Studio in the computer's firewall.</p>
+              <p className="text-xs text-zinc-500">
+                Devices must be on the same Wi-Fi. If they can't connect, allow
+                Hearken Studio in the computer's firewall.
+              </p>
             </>
           )}
         </div>
@@ -139,10 +209,14 @@ function PhoneRecap() {
   const saveSettings = useDashboard((s) => s.saveSettings);
   return (
     <label className="block space-y-1">
-      <span className="text-xs text-zinc-400">Recap on phones (read or download as PDF or Word)</span>
+      <span className="text-xs text-zinc-400">
+        Recap on phones (read or download as PDF or Word)
+      </span>
       <select
         value={mode}
-        onChange={(e) => void saveSettings({ phoneRecap: e.target.value as typeof mode })}
+        onChange={(e) =>
+          void saveSettings({ phoneRecap: e.target.value as typeof mode })
+        }
         className="w-full rounded-md bg-zinc-950 px-2 py-1.5 text-sm ring-1 ring-zinc-800 focus:ring-sky-600"
       >
         <option value="notes">Scriptures, songs and sermon notes</option>
@@ -153,13 +227,24 @@ function PhoneRecap() {
   );
 }
 
-function Link({ label, url, hint }: { label: string; url: string; hint?: string }) {
+function Link({
+  label,
+  url,
+  hint,
+}: {
+  label: string;
+  url: string;
+  hint?: string;
+}) {
   const [copied, setCopied] = useState(false);
   return (
     <div>
       <div className="flex items-center gap-2">
         <span className="w-20 flex-none text-xs text-zinc-400">{label}</span>
-        <code className="min-w-0 flex-1 truncate rounded bg-zinc-950 px-1.5 py-0.5 text-xs text-sky-300" title={url}>
+        <code
+          className="min-w-0 flex-1 truncate rounded bg-zinc-950 px-1.5 py-0.5 text-xs text-sky-300"
+          title={url}
+        >
           {url.replace(/^https?:\/\//, "")}
         </code>
         <button
@@ -174,7 +259,9 @@ function Link({ label, url, hint }: { label: string; url: string; hint?: string 
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      {hint && <p className="ml-[5.5rem] mt-0.5 text-[11px] text-zinc-500">{hint}</p>}
+      {hint && (
+        <p className="ml-[5.5rem] mt-0.5 text-[11px] text-zinc-500">{hint}</p>
+      )}
     </div>
   );
 }
