@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri",
+    "tauri": "node scripts/tauri.cjs",
     "bible:fetch": "python3 scripts/fetch_bibles.py",
     "bible:build": "python3 scripts/build_bible_db.py --source data/translations --out src-tauri/resources/bible.db",
     "bible:sample": "python3 scripts/build_bible_db.py --sample --out src-tauri/resources/bible.db",
