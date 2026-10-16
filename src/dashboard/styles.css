@@ -70,6 +70,21 @@ textarea,
   user-select: text;
 }
 
+/* While listening, the colon in the mark breathes, one dot after the other. */
+@keyframes mark-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+.mark-breathe {
+  animation: mark-breathe 1.8s ease-in-out infinite;
+}
+.mark-breathe-late {
+  animation-delay: 0.9s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mark-breathe { animation: none; }
+}
+
 /* Text on gold must be dark to be readable (components were written for darker accents). */
 .bg-amber-500, .bg-amber-600, .bg-amber-700,
 .bg-emerald-600, .bg-emerald-700, .bg-sky-600, .bg-sky-700 {

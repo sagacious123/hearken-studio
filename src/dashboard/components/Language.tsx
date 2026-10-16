@@ -4,6 +4,7 @@ import { api, type LanguageSetup } from "../../lib/ipc";
 import { translate, useT, type T, type UiLanguage } from "../../lib/i18n";
 import { useDashboard } from "../store";
 import { Modal, SignInForm } from "./Licence";
+import { Mark } from "./Mark";
 
 interface Choice {
   languages: string[];
@@ -252,10 +253,7 @@ export function Welcome() {
       >
         <header className="flex items-center justify-between">
           <span className="flex items-center gap-2.5 font-display text-base font-semibold tracking-[0.14em] text-zinc-100">
-            <svg viewBox="0 0 32 32" className="h-5 w-5" aria-hidden>
-              <path d="M16 3c3 4.5 5 7.2 5 10.2A5 5 0 0 1 16 18a5 5 0 0 1-5-4.8C11 10.2 13 7.5 16 3z" fill="#e9b24c" />
-              <path d="M6 22c3.3-1.6 6.7-1.6 10 0 3.3-1.6 6.7-1.6 10 0v6c-3.3-1.6-6.7-1.6-10 0-3.3-1.6-6.7-1.6-10 0z" fill="#f4ede1" />
-            </svg>
+            <Mark className="h-6 w-6" />
             HEARKEN
           </span>
           {!signedIn && <span className="text-xs font-medium text-zinc-500">{t("Step {n} of {total}", { n: step === "language" ? 1 : 2, total: 2 })}</span>}

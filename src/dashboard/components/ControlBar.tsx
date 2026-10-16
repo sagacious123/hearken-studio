@@ -9,6 +9,7 @@ import { AccuracyButton } from "./AccuracyButton";
 import { BibleLibrary } from "./BibleLibrary";
 import { LanguageChip } from "./Language";
 import { LicenceChip } from "./Licence";
+import { Mark } from "./Mark";
 import { ScreensButton } from "./ScreensButton";
 import { ShareButton } from "./ShareButton";
 
@@ -66,16 +67,7 @@ export function ControlBar() {
     // service is here; everything else is under Settings.
     <header className="relative z-20 mx-3 mt-3 flex flex-nowrap items-center gap-2 rounded-2xl border border-white/10 bg-[rgba(20,16,30,.42)] py-2.5 pl-4 pr-2.5 text-sm shadow-[0_10px_40px_-12px_rgba(0,0,0,.7),inset_0_1px_0_rgba(255,255,255,.06)] backdrop-blur-xl backdrop-saturate-150">
       <div className="mr-2 flex flex-none items-center gap-2.5 font-display text-base font-semibold tracking-[0.14em]">
-        <svg viewBox="0 0 32 32" className="h-5 w-5" aria-hidden>
-          <path
-            d="M16 3c3 4.5 5 7.2 5 10.2A5 5 0 0 1 16 18a5 5 0 0 1-5-4.8C11 10.2 13 7.5 16 3z"
-            fill="#e9b24c"
-          />
-          <path
-            d="M6 22c3.3-1.6 6.7-1.6 10 0 3.3-1.6 6.7-1.6 10 0v6c-3.3-1.6-6.7-1.6-10 0-3.3-1.6-6.7-1.6-10 0z"
-            fill="#f4ede1"
-          />
-        </svg>
+        <Mark className="h-6 w-6" listening={s.running} />
         <span className="hidden min-[1250px]:inline">HEARKEN</span>
       </div>
       <LicenceChip />
