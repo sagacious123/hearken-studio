@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { api, type DeviceInfo, type MonitorInfo } from "../../lib/ipc";
+import { useT } from "../../lib/i18n";
 import { parseTheme } from "../../lib/theme";
 import { useDashboard } from "../store";
 import { useDismiss } from "../useDismiss";
 import { AccuracyButton } from "./AccuracyButton";
 import { BibleLibrary } from "./BibleLibrary";
+import { LanguageChip } from "./Language";
 import { LicenceChip } from "./Licence";
 import { ScreensButton } from "./ScreensButton";
 import { ShareButton } from "./ShareButton";
@@ -14,6 +16,7 @@ import { ShareButton } from "./ShareButton";
 const DEVICE_REFRESH_MS = 3000;
 
 export function ControlBar() {
+  const t = useT();
   // Only what the bar shows: the level meter and engine badge subscribe to their own
   // fast-changing state, so this doesn't re-render ten times a second.
   const s = useDashboard(
@@ -86,7 +89,7 @@ export function ControlBar() {
 
       <div
         className={`${box} relative gap-2.5 pl-3 pr-2.5 ${s.running ? "" : "cursor-pointer"}`}
-        title={s.running ? "Stop listening to change the input" : "Sound input"}
+        title={s.running ? t("Stop listening to change the input") : t("Sound input")}
       >
         <Dropdown
           disabled={s.running}
@@ -94,16 +97,16 @@ export function ControlBar() {
           onFocus={refreshDevices}
           value={settings.inputDevice ?? ""}
           onChange={(v) => s.saveSettings({ inputDevice: v || null })}
-          label="Sound input"
+          label={t("Sound input")}
           display={
             devices.find((d) => d.id === settings.inputDevice)?.name ??
-            (settings.inputDevice ? "Saved input" : "System default input")
+            (settings.inputDevice ? t("Saved input") : t("System default input"))
           }
           className="max-w-44 font-semibold min-[1400px]:max-w-56"
           caret={false}
           fill
         >
-          <option value="">System default input</option>
+          <option value="">{t("System default input")}</option>
           {devices.map((d) => (
             <option key={d.id} value={d.id}>
               {d.kind === "loopback" ? "🔁 " : ""}
@@ -120,11 +123,11 @@ export function ControlBar() {
         </span>
       </div>
 
-      <div className={`${box} gap-1.5 pl-3 pr-2.5`}>
+      <div className={`${box} flex-none gap-1.5 pl-3 pr-2.5`}>
         <Dropdown
           value={settings.translation}
           onChange={(v) => s.saveSettings({ translation: v })}
-          label="Translation"
+          label={t("Translation")}
           display={settings.translation}
           className="font-semibold"
         >
@@ -138,16 +141,16 @@ export function ControlBar() {
         <Dropdown
           value={settings.secondaryTranslation ?? ""}
           onChange={(v) => s.saveSettings({ secondaryTranslation: v || null })}
-          label="Side by side"
-          title="Show a second translation (or language) next to the first"
-          display={settings.secondaryTranslation ?? "Side by side"}
+          label={t("Side by side")}
+          title={t("Show a second translation (or language) next to the first")}
+          display={settings.secondaryTranslation ?? t("Side by side")}
           className={
             settings.secondaryTranslation
               ? "font-semibold"
               : "font-medium !text-zinc-500"
           }
         >
-          <option value="">Side by side</option>
+          <option value="">{t("Side by side")}</option>
           {s.translations
             .filter((t) => t.code !== settings.translation)
             .map((t) => (
@@ -160,6 +163,7 @@ export function ControlBar() {
       </div>
 
       <div className="ml-auto flex flex-none items-center gap-0.5">
+        <LanguageChip />
         {/* Opened from Settings; each shows its own button only while there's news (a download, a warning). */}
         <BibleLibrary
           open={panel === "bibles"}
@@ -184,9 +188,9 @@ export function ControlBar() {
         <button
           onClick={() => api.openOutputWindow(monitor)}
           className="ml-1.5 h-9 whitespace-nowrap rounded-lg bg-amber-500 px-3.5 text-sm font-bold hover:bg-amber-400"
-          title="Open the projector output on the chosen display (Settings → Output display). Press Esc on it to close it."
+          title={t("Open the projector output on the chosen display (Settings → Output display). Press Esc on it to close it.")}
         >
-          Open output
+          {t("Open output")}
         </button>
       </div>
     </header>
@@ -259,6 +263,7 @@ function Dropdown({
 
 /** Two translations next to each other or one above the other (part of the screen's style). */
 function StackToggle() {
+  const t = useT();
   const liveTheme = useDashboard((st) => st.live?.theme);
   const draft = useDashboard((st) => st.draftTheme);
   const setDraft = useDashboard((st) => st.setDraftTheme);
@@ -280,10 +285,10 @@ function StackToggle() {
       className="ml-1 flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 hover:bg-white/[.06] hover:text-zinc-100"
       title={
         rows
-          ? "Stacked: one above the other. Click to put them side by side."
-          : "Side by side. Click to stack them one above the other."
+          ? t("Stacked: one above the other. Click to put them side by side.")
+          : t("Side by side. Click to stack them one above the other.")
       }
-      aria-label={rows ? "Put translations side by side" : "Stack translations"}
+      aria-label={rows ? t("Put translations side by side") : t("Stack translations")}
     >
       <svg
         viewBox="0 0 16 16"
@@ -321,6 +326,7 @@ function ListenButton({
   benchProgress: string | null;
   onToggle: () => void;
 }) {
+  const t = useT();
   const [since, setSince] = useState<number | null>(null);
   const [, tick] = useState(0);
   useEffect(() => {
@@ -339,7 +345,7 @@ function ListenButton({
     <button
       disabled={starting}
       onClick={onToggle}
-      title={running ? "Stop listening" : "Start listening"}
+      title={running ? t("Stop listening") : t("Start listening")}
       className={`flex h-9 flex-none items-center gap-2.5 whitespace-nowrap rounded-lg px-3.5 text-sm font-semibold disabled:opacity-60 ${
         running
           ? "border border-amber-500/45 bg-amber-500/[.14] text-amber-200 hover:bg-amber-500/25"
@@ -350,10 +356,10 @@ function ListenButton({
         <span className="h-2 w-2 rounded-full bg-amber-500 shadow-[0_0_0_3px_rgba(233,178,76,.25)]" />
       )}
       {starting
-        ? (benchProgress ?? "Starting…")
+        ? (benchProgress ?? t("Starting…"))
         : running
-          ? "Listening"
-          : "Start listening"}
+          ? t("Listening")
+          : t("Start listening")}
       {running && (
         <span className="font-normal tabular-nums opacity-80">{elapsed}</span>
       )}
@@ -377,6 +383,7 @@ function SettingsMenu({
   onStyle: () => void;
   onPanel: (p: "accuracy" | "bibles") => void;
 }) {
+  const t = useT();
   const settings = useDashboard((st) => st.settings);
   const saveSettings = useDashboard((st) => st.saveSettings);
   const [open, setOpen] = useState(false);
@@ -388,8 +395,8 @@ function SettingsMenu({
         onClick={() => setOpen(!open)}
         className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold hover:bg-white/[.06] ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
         aria-expanded={open}
-        aria-label="Settings"
-        title="Settings"
+        aria-label={t("Settings")}
+        title={t("Settings")}
       >
         <svg
           viewBox="0 0 24 24"
@@ -405,7 +412,7 @@ function SettingsMenu({
           <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
           <circle cx="12" cy="12" r="3" />
         </svg>
-        <span className="hidden min-[1250px]:inline">Settings</span>
+        <span className="hidden min-[1250px]:inline">{t("Settings")}</span>
       </button>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] space-y-4 overflow-hidden rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
@@ -415,59 +422,68 @@ function SettingsMenu({
                 setOpen(false);
                 onStyle();
               }}
-              hint="Fonts, colours, backgrounds"
+              hint={t("Fonts, colours, backgrounds")}
             >
-              Style
+              {t("Style")}
             </MenuItem>
             <MenuItem
               onClick={() => {
                 setOpen(false);
                 onPanel("accuracy");
               }}
-              hint="Models, names to listen for, search by meaning"
+              hint={t("Models, names to listen for, search by meaning")}
             >
-              Transcription accuracy
+              {t("Transcription accuracy")}
             </MenuItem>
             <MenuItem
               onClick={() => {
                 setOpen(false);
                 onPanel("bibles");
               }}
-              hint="Yoruba, Igbo, Hausa and more"
+              hint={t("Yoruba, Igbo, Hausa and more")}
             >
-              Bibles
+              {t("Bibles")}
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                setOpen(false);
+                useDashboard.getState().setLanguageOpen(true);
+              }}
+              hint={t("Preaching languages, menus and buttons")}
+            >
+              {t("Language")}
             </MenuItem>
             <MenuItem
               onClick={() => {
                 setOpen(false);
                 useDashboard.getState().setLicenceOpen(true);
               }}
-              hint="Account, free trial, licence key"
+              hint={t("Account, free trial, licence key")}
             >
-              Account and licence
+              {t("Account and licence")}
             </MenuItem>
           </div>
           <div className="space-y-2.5 border-t border-zinc-800 pt-3">
             <h3 className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
-              During the service
+              {t("During the service")}
             </h3>
             <Toggle
               checked={settings.followReading}
               onChange={(v) => saveSettings({ followReading: v })}
-              label="Follow reading"
-              title="Highlight the live passage as it's read and move to the next verse automatically"
+              label={t("Follow reading")}
+              title={t("Highlight the live passage as it's read and move to the next verse automatically")}
             />
             <Toggle
               checked={settings.lyricsDetection}
               onChange={(v) => saveSettings({ lyricsDetection: v })}
-              label="Follow worship songs"
-              title="Recognise songs from your library as they're sung and follow them section by section"
+              label={t("Follow worship songs")}
+              title={t("Recognise songs from your library as they're sung and follow them section by section")}
             />
             <Toggle
               checked={settings.voiceCommands}
               onChange={(v) => saveSettings({ voiceCommands: v })}
-              label="Voice commands (“next verse”, “go back”)"
-              title="Move the live scripture when the preacher says “next verse”, “previous verse”, “go back” or “go to the first verse”"
+              label={t("Voice commands (“next verse”, “go back”)")}
+              title={t("Move the live scripture when the preacher says “next verse”, “previous verse”, “go back” or “go to the first verse”")}
             />
             <label className="flex items-center gap-2 text-zinc-300">
               <input
@@ -478,7 +494,7 @@ function SettingsMenu({
                 }
                 className="accent-amber-500"
               />
-              Show sure detections automatically, at
+              {t("Show sure detections automatically, at")}
               <input
                 type="number"
                 min={0.5}
@@ -489,13 +505,13 @@ function SettingsMenu({
                   saveSettings({ autoThreshold: Number(e.target.value) })
                 }
                 className="w-16 rounded-md border border-zinc-700 bg-transparent px-1.5 py-0.5 tabular-nums"
-                aria-label="Automatic threshold"
+                aria-label={t("Automatic threshold")}
               />
             </label>
           </div>
           <label className="block space-y-1.5">
             <span className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
-              Output display
+              {t("Output display")}
             </span>
             <select
               value={monitor ?? ""}
@@ -506,11 +522,11 @@ function SettingsMenu({
               }
               className={`${select} w-full`}
             >
-              <option value="">Automatic (second display)</option>
+              <option value="">{t("Automatic (second display)")}</option>
               {monitors.map((m) => (
                 <option key={m.index} value={m.index}>
                   {m.name} {m.width}×{m.height}
-                  {m.primary ? " (primary)" : ""}
+                  {m.primary ? ` (${t("primary")})` : ""}
                 </option>
               ))}
             </select>
@@ -518,12 +534,12 @@ function SettingsMenu({
               onClick={() => void api.closeOutputWindow()}
               className="text-xs font-medium text-zinc-400 underline-offset-2 hover:text-zinc-100 hover:underline"
             >
-              Close the output window
+              {t("Close the output window")}
             </button>
           </label>
           <div className="space-y-1.5 border-t border-zinc-800 pt-3">
             <span className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
-              Speech engine
+              {t("Speech engine")}
             </span>
             <EngineBadge />
           </div>
@@ -597,6 +613,7 @@ function LevelMeter() {
 }
 
 function EngineBadge() {
+  const t = useT();
   const {
     info,
     profile,
@@ -627,7 +644,7 @@ function EngineBadge() {
             `${b.model}/${b.backend}: ${b.ok ? `${b.inferMs.toFixed(0)} ms` : b.error}`,
         )
         .join("\n")
-    : "Not benchmarked yet — runs automatically on first start";
+    : t("Not benchmarked yet — runs automatically on first start");
   return (
     <div
       className="flex flex-wrap items-center gap-2 text-xs text-zinc-400"
@@ -652,7 +669,7 @@ function EngineBadge() {
         onClick={rebenchmark}
         className="rounded px-1.5 py-0.5 hover:bg-zinc-800 disabled:opacity-40"
       >
-        {benchProgress && !running ? benchProgress : "Re-benchmark"}
+        {benchProgress && !running ? benchProgress : t("Re-benchmark")}
       </button>
     </div>
   );

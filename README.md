@@ -179,6 +179,18 @@ Any other scrollmapper file name also works with `--extra`, but check its licenc
 
 The five translations come to 155,474 verses and 38.8 MB, including the FTS index. KJV loads first and defines versification. Verses that a translation omits return no slide rather than an error. These are Matthew 17:21, Acts 8:37 and others in ASV/BBE/WEB, plus the Romans doxology, which WEB places at 14:24–26.
 
+## Languages
+
+Hearken listens for English, French and Spanish. The first-run screens ask which languages are preached and whether Hearken's own menus switch to one of them; both can be changed under Settings → Language. Choosing a language other than English downloads its Bible (Louis Segond 1910, Reina-Valera 1909) and a multilingual Whisper model of the size the benchmark picked (`tiny` or `base`, 31–60 MB); the accuracy pass uses the multilingual `small` or Large v3 Turbo.
+
+Everything that listens takes its words from `src-tauri/src/scripture/lang.rs`: book names, "chapitre"/"versículo", spoken numbers (including French counting in twenties), ordinals ("Première épître aux Corinthiens", "Primera de Corintios"), little words for quote matching, the Whisper prompt and its hallucinations. Text is compared without accents. Downloaded Bibles are word-indexed, so verses read aloud in French or Spanish are recognised against them. Voice commands have their own French and Spanish phrases in `voice.rs`. Search by meaning is English only.
+
+With several languages, Whisper tells them apart on each finished sentence; partials keep the last sentence's language, because detection costs a second encoder pass. References said in any chosen language are understood whichever language a sentence is decoded in.
+
+Interface text lives in `src/lib/i18n/` (one file per area, keyed by the English text, falling back to English).
+
+To check real recordings: `HEARKEN_MODEL=…/ggml-base-q5_1.bin HEARKEN_LANGS=fr HEARKEN_WAV=a.wav cargo test transcribe_files -- --ignored --nocapture` (16 kHz mono WAV).
+
 ## Auto-updates via GitHub Releases (free)
 
 1. **Generate the updater signing key.** Do this once, and keep the key out of git.

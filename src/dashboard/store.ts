@@ -13,7 +13,9 @@ import {
   type TranscriptEvent,
   type VoiceCommand,
   type Translation,
+  type LanguageOption,
 } from "../lib/ipc";
+import { setUiLanguage, t } from "../lib/i18n";
 import type { Theme } from "../lib/theme";
 
 const MAX_FINALS = 60;
@@ -67,6 +69,16 @@ interface DashboardState {
   /** The sign-in screen is open. */
   signInOpen: boolean;
   setSignInOpen: (open: boolean) => void;
+  /** The Language dialog is open. */
+  languageOpen: boolean;
+  setLanguageOpen: (open: boolean) => void;
+  /** The languages Hearken can listen for. */
+  languages: LanguageOption[];
+  /** Downloads for the preaching languages ("bible:LSG", "model:base"), 0–1. */
+  setup: Record<string, { label: string; fraction: number }>;
+  setupError: string | null;
+  /** Save the preaching and menu languages and start downloading what they need. */
+  applyLanguages: (languages: string[], uiLanguage: Settings["uiLanguage"]) => Promise<void>;
 
   settings: Settings | null;
   translations: Translation[];
@@ -116,6 +128,29 @@ function refreshPreview(settings: Settings | null) {
   });
 }
 
+/** A setup download made progress. */
+function progress(key: string, fraction: number) {
+  const s = useDashboard.getState();
+  const d = s.setup[key];
+  if (d) useDashboard.setState({ setup: { ...s.setup, [key]: { ...d, fraction } } });
+}
+
+/**
+ * Show scripture in a preaching language: when the translation on screen isn't in any of
+ * `languages`, switch to the first language's Bible (once it's downloaded).
+ */
+async function showBibleFor(languages: string[]) {
+  const { settings, translations, languages: options, saveSettings } = useDashboard.getState();
+  if (!settings || languages.length === 0) return;
+  const current = settings.translation.toUpperCase();
+  const bundled = translations.filter((tr) => !tr.downloaded).map((tr) => tr.code.toUpperCase());
+  const currentLang = bundled.includes(current) ? "en" : options.find((o) => o.bible.toUpperCase() === current)?.code;
+  if (currentLang && languages.includes(currentLang)) return;
+  const want = options.find((o) => o.code === languages[0])?.bible;
+  const installed = translations.find((tr) => tr.code.toUpperCase() === want?.toUpperCase());
+  if (installed) await saveSettings({ translation: installed.code });
+}
+
 export const useDashboard = create<DashboardState>((set, get) => ({
   running: false,
   starting: false,
@@ -142,6 +177,11 @@ export const useDashboard = create<DashboardState>((set, get) => ({
   setLicenceOpen: (licenceOpen) => set({ licenceOpen }),
   signInOpen: false,
   setSignInOpen: (signInOpen) => set({ signInOpen }),
+  languageOpen: false,
+  setLanguageOpen: (languageOpen) => set({ languageOpen }),
+  languages: [],
+  setup: {},
+  setupError: null,
   settings: null,
   translations: [],
   profile: null,
@@ -155,8 +195,10 @@ export const useDashboard = create<DashboardState>((set, get) => ({
       // Listening carries on if the dashboard reloads: pick the session back up.
       api.pipelineInfo().catch(() => null),
     ]);
+    setUiLanguage(settings.uiLanguage);
     set({ settings, translations, profile, live, ...(info ? { running: true, info } : {}) });
     void api.licenceStatus().then((licence) => set({ licence })).catch(console.error);
+    void api.listLanguages().then((languages) => set({ languages })).catch(console.error);
 
     const unlisteners = await Promise.all([
       events.transcript((t) => {
@@ -206,6 +248,8 @@ export const useDashboard = create<DashboardState>((set, get) => ({
         set((s) => ({ live: s.live && sameJson(s.live.theme, live.theme) ? { ...live, theme: s.live.theme } : live })),
       ),
       events.hardwareProgress((benchProgress) => set({ benchProgress })),
+      events.libraryProgress((p) => progress(`bible:${p.code}`, p.fraction)),
+      events.modelProgress((p) => p.phase === "download" && progress(`model:${p.id}`, p.received / Math.max(1, p.total))),
     ]);
     return () => unlisteners.forEach((u) => u());
   },
@@ -223,6 +267,9 @@ export const useDashboard = create<DashboardState>((set, get) => ({
         set({ signInOpen: true, licence: await api.licenceStatus().catch(() => get().licence) });
       } else if (String(e).startsWith("LICENCE:")) {
         set({ licenceOpen: true, licence: await api.licenceStatus().catch(() => get().licence) });
+      } else if (String(e).startsWith("LANGUAGE:")) {
+        // The speech model for the preaching language isn't downloaded: the Language dialog has it.
+        set({ languageOpen: true });
       } else {
         set({ error: String(e) });
       }
@@ -240,6 +287,7 @@ export const useDashboard = create<DashboardState>((set, get) => ({
     const existing = get().settings;
     if (!existing) return;
     const settings = await api.updateSettings({ ...existing, ...patch });
+    setUiLanguage(settings.uiLanguage);
     set({ settings });
     // Preview follows a change of translation or side by side straight away.
     refreshPreview(settings);
@@ -257,6 +305,39 @@ export const useDashboard = create<DashboardState>((set, get) => ({
   },
 
   dismiss: (id) => set((s) => ({ queue: s.queue.filter((d) => d.id !== id) })),
+
+  applyLanguages: async (languages, uiLanguage) => {
+    await get().saveSettings({ languages, uiLanguage });
+    set({ setupError: null });
+    const need = await api.languageSetup(languages);
+    const run = async (key: string, label: string, download: () => Promise<unknown>) => {
+      if (get().setup[key]) return; // already downloading
+      set((s) => ({ setup: { ...s.setup, [key]: { label, fraction: 0 } } }));
+      try {
+        await download();
+      } catch (e) {
+        set({ setupError: String(e) });
+      } finally {
+        set(({ setup: { [key]: _, ...rest } }) => ({ setup: rest }));
+      }
+    };
+    const bibles = need.bibles
+      .filter((b) => !b.installed)
+      .map((b) =>
+        run(`bible:${b.code}`, b.name, async () => {
+          set({ translations: await api.installTranslation(b.code) });
+          await showBibleFor(get().settings?.languages ?? languages);
+        }),
+      );
+    const names = languages.filter((c) => c !== "en").map((c) => t(get().languages.find((l) => l.code === c)?.name ?? c));
+    const speech = need.speechModel;
+    const model = speech && !speech.installed
+      ? run(`model:${speech.id}`, t("{language} speech model", { language: names.join(" + ") }), () => api.downloadModel(speech.id))
+      : null;
+    await showBibleFor(languages);
+    // Returns once the settings are saved; the downloads carry on (`setup` shows them).
+    void Promise.all([...bibles, model]);
+  },
 
   rebenchmark: async () => {
     set({ benchProgress: "Starting benchmark…", error: null });

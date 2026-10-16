@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Detection } from "../../lib/ipc";
+import { useT } from "../../lib/i18n";
 import { useDashboard } from "../store";
 import { PanelHeader } from "./TranscriptPanel";
 
@@ -16,13 +17,14 @@ const KIND_LABEL = {
 export function DetectionQueue() {
   const queue = useDashboard((s) => s.queue);
   const followLatest = useDashboard((s) => s.followLatest);
+  const t = useT();
 
   return (
     <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800 bg-white/[.02]">
-      <PanelHeader title="Detections">
+      <PanelHeader title={t("Detections")}>
         <label
           className="flex items-center gap-1.5 font-ui text-xs font-semibold normal-case tracking-normal text-zinc-400"
-          title="Each new detection goes straight into Preview"
+          title={t("Each new detection goes straight into Preview")}
         >
           <input
             type="checkbox"
@@ -32,14 +34,14 @@ export function DetectionQueue() {
             }
             className="accent-amber-500"
           />
-          Preview follows latest
+          {t("Preview follows latest")}
         </label>
       </PanelHeader>
       <UnknownSong />
       <ul className="min-h-0 flex-1 overflow-y-auto">
         {queue.length === 0 && (
           <li className="border-t border-zinc-800 px-4 py-4 text-sm font-semibold text-zinc-500">
-            References and songs appear here as they’re spoken or sung.
+            {t("References and songs appear here as they’re spoken or sung.")}
           </li>
         )}
         {queue.map((d) => (
@@ -47,10 +49,10 @@ export function DetectionQueue() {
         ))}
       </ul>
       <footer className="flex flex-none flex-wrap gap-x-3 gap-y-1 border-t border-zinc-800 px-4 py-2.5 text-xs font-medium text-zinc-500">
-        <Key k="⏎">go live</Key>
-        <Key k="← →">verse</Key>
-        <Key k="B">black</Key>
-        <Key k="Esc">clear</Key>
+        <Key k="⏎">{t("go live")}</Key>
+        <Key k="← →">{t("verse")}</Key>
+        <Key k="B">{t("black")}</Key>
+        <Key k="Esc">{t("clear")}</Key>
       </footer>
     </section>
   );
@@ -65,6 +67,7 @@ function UnknownSong() {
   const lastSongAt = useDashboard((s) => s.lastSongAt);
   const songLive = useDashboard((s) => !!s.live?.slide?.song);
   const [, tick] = useState(0);
+  const tr = useT();
   useEffect(() => {
     if (since === null) return;
     const wait = since + UNKNOWN_SONG_AFTER_MS - Date.now();
@@ -78,11 +81,15 @@ function UnknownSong() {
     !songLive &&
     (lastSongAt === null || lastSongAt < since);
   if (!show) return null;
+  // One sentence, its [opening] highlighted, so translations can move the highlight.
+  const [before, lead, after] = tr(
+    "[♪ A song is being sung] that isn’t in your song library. Add its lyrics under Songs and Hearken will find and follow it next time.",
+  ).split(/\[|\]/);
   return (
     <p className="flex-none border-t border-zinc-800 bg-amber-500/[.06] px-4 py-2.5 text-xs font-medium leading-snug text-zinc-300">
-      <span className="font-medium text-amber-200">♪ A song is being sung</span>{" "}
-      that isn’t in your song library. Add its lyrics under Songs and Hearken
-      will find and follow it next time.
+      {before}
+      <span className="font-medium text-amber-200">{lead}</span>
+      {after}
     </p>
   );
 }
@@ -105,6 +112,7 @@ function DetectionRow({ d }: { d: Detection }) {
   const isPreview = useDashboard((s) => s.preview?.id === d.slide.id);
   const isLive = useDashboard((s) => s.live?.slide?.id === d.slide.id);
   const pct = Math.round(d.confidence * 100);
+  const t = useT();
 
   return (
     <li
@@ -122,7 +130,7 @@ function DetectionRow({ d }: { d: Detection }) {
         </span>
         <span
           className="flex flex-none items-center gap-1.5 text-xs tabular-nums text-zinc-400"
-          title={`${pct}% sure`}
+          title={t("{pct}% sure", { pct })}
         >
           <span className="h-[3px] w-8 overflow-hidden rounded bg-zinc-700">
             <span
@@ -136,19 +144,19 @@ function DetectionRow({ d }: { d: Detection }) {
       <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs font-medium text-zinc-500">
         <span className="font-medium text-zinc-300">
           {d.kind === "quote" && d.confidence < 0.9
-            ? "Possible quote"
-            : KIND_LABEL[d.kind]}
+            ? t("Possible quote")
+            : t(KIND_LABEL[d.kind])}
         </span>
         <span className="min-w-0 truncate">· “{d.matched}”</span>
-        {d.planned && <span>· in plan</span>}
+        {d.planned && <span>· {t("in plan")}</span>}
         {d.autoProjected && (
           <span className="font-medium text-amber-300">
-            · {d.kind === "command" ? "shown" : "shown automatically"}
+            · {d.kind === "command" ? t("shown") : t("shown automatically")}
           </span>
         )}
         {isLive && (
           <span className="font-semibold tracking-wider text-red-400 text-[10px]">
-            · ON SCREEN
+            · {t("ON SCREEN")}
           </span>
         )}
       </p>
@@ -165,9 +173,9 @@ function DetectionRow({ d }: { d: Detection }) {
             dismiss(d.id);
           }}
           className="rounded px-2 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
-          aria-label="Dismiss"
+          aria-label={t("Dismiss")}
         >
-          Dismiss
+          {t("Dismiss")}
         </button>
         <button
           onClick={(e) => {
@@ -176,7 +184,7 @@ function DetectionRow({ d }: { d: Detection }) {
           }}
           className="rounded bg-amber-500 px-2.5 py-1 font-semibold hover:bg-amber-400"
         >
-          Live
+          {t("Live")}
         </button>
       </div>
     </li>

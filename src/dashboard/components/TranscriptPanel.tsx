@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useRef } from "react";
+import { locale, useT, type T } from "../../lib/i18n";
 import { useDashboard } from "../store";
 
 const clock = (ms: number) =>
-  new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  new Date(ms).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+
+/** Voice-command labels arrive in English ("Next verse", "Verses 6–8"); shown translated. */
+function voiceLabel(t: T, label: string): string {
+  const range = /^Verses (\d+)–(\d+)$/.exec(label);
+  if (range) return t("Verses {s}–{e}", { s: range[1], e: range[2] });
+  const one = /^Verse (\d+)$/.exec(label);
+  if (one) return t("Verse {n}", { n: one[1] });
+  return t(label);
+}
 
 export function TranscriptPanel() {
   const finals = useDashboard((s) => s.finals);
@@ -10,6 +20,7 @@ export function TranscriptPanel() {
   const queue = useDashboard((s) => s.queue);
   const voice = useDashboard((s) => s.voiceCommands);
   const endRef = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   // What each sentence led to, shown beside it ("→ John 3:16").
   const found = useMemo(() => {
@@ -30,15 +41,15 @@ export function TranscriptPanel() {
   }, [finals, partial]);
 
   return (
-    <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-4 pb-3 text-[14px] font-medium leading-relaxed">
+    <div className="min-h-0 flex-1 select-text cursor-auto space-y-2.5 overflow-y-auto px-4 pb-3 text-[14px] font-medium leading-relaxed">
       {finals.length === 0 && !partial && (
-        <p className="text-zinc-500">Waiting for speech…</p>
+        <p className="text-zinc-500">{t("Waiting for speech…")}</p>
       )}
       {finals.map((l) => (
         <div
           key={l.utteranceId}
           className="grid grid-cols-[2.75rem_minmax(0,1fr)] gap-2"
-          title={`${l.refined ? "Checked by the accuracy pass" : "Quick transcription"} · confidence ${(l.confidence * 100).toFixed(0)}% · ${(l.inferenceMs / 1000).toFixed(1)} s`}
+          title={`${l.refined ? t("Checked by the accuracy pass") : t("Quick transcription")} · ${t("confidence {n}%", { n: (l.confidence * 100).toFixed(0) })} · ${(l.inferenceMs / 1000).toFixed(1)} s`}
         >
           <time className="pt-0.5 text-xs tabular-nums text-zinc-500">
             {clock(l.at)}
@@ -58,15 +69,15 @@ export function TranscriptPanel() {
             {l.sung && (
               <span
                 className="ml-2 inline-block rounded bg-zinc-800 px-1.5 align-middle text-xs text-zinc-400"
-                title="Heard sung, not spoken: not treated as a quote or a command, and left out of sermon notes"
+                title={t("Heard sung, not spoken: not treated as a quote or a command, and left out of sermon notes")}
               >
-                ♪ sung
+                {t("♪ sung")}
               </span>
             )}
             {l.refined && (
               <span
                 className="ml-1.5 align-middle text-[10px] text-zinc-500"
-                aria-label="checked"
+                aria-label={t("checked")}
               >
                 ✓
               </span>
@@ -76,11 +87,11 @@ export function TranscriptPanel() {
                 className={`ml-2 inline-block rounded px-1.5 align-middle text-xs font-medium ${voice[l.utteranceId].moved ? "bg-amber-500/15 text-amber-200" : "bg-zinc-800 text-zinc-400"}`}
                 title={
                   voice[l.utteranceId].moved
-                    ? `Voice command: now showing ${voice[l.utteranceId].now}`
-                    : "Voice command: already at the end of the chapter"
+                    ? t("Voice command: now showing {now}", { now: voice[l.utteranceId].now ?? "" })
+                    : t("Voice command: already at the end of the chapter")
                 }
               >
-                ↪ {voice[l.utteranceId].label}
+                ↪ {voiceLabel(t, voice[l.utteranceId].label)}
                 {voice[l.utteranceId].moved && voice[l.utteranceId].now
                   ? ` · ${voice[l.utteranceId].now}`
                   : ""}
@@ -114,18 +125,19 @@ export function TranscriptPanel() {
 /** Shown in the transcript header while the room is singing. */
 export function SingingBadge() {
   const singing = useDashboard((s) => s.singingSince !== null);
+  const t = useT();
   if (!singing)
     return (
       <span className="font-ui text-[11px] font-medium normal-case tracking-normal text-zinc-500">
-        Checked lines marked ✓
+        {t("Checked lines marked ✓")}
       </span>
     );
   return (
     <span
       className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 font-ui text-[11px] font-medium normal-case tracking-normal text-amber-200"
-      title="The room is singing: sung Bible phrases aren't suggested as quotes, and voice commands are ignored"
+      title={t("The room is singing: sung Bible phrases aren't suggested as quotes, and voice commands are ignored")}
     >
-      <span className="animate-pulse">♪</span> Singing
+      <span className="animate-pulse">♪</span> {t("Singing")}
     </span>
   );
 }

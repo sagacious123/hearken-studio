@@ -1,18 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { type T, useT } from "../../lib/i18n";
 import { api, type Slide, type SongSummary } from "../../lib/ipc";
 import { useDashboard } from "../store";
 import { SlideRow } from "./SlideRow";
 
-const TEMPLATE = `Song title
+// The section headers stay in English: they are what the song parser recognises.
+const template = (t: T) => `${t("Song title")}
 CCLI Song # 1234567
 
 Verse 1
-First line of the verse
-Second line
+${t("First line of the verse")}
+${t("Second line")}
 
 Chorus
-First line of the chorus
-Second line`;
+${t("First line of the chorus")}
+${t("Second line")}`;
+
+/** The parser's own name for a part with no header ("Part 3"); headers the user typed stay as they are. */
+const sectionTitle = (label: string | undefined, t: T) => {
+  const m = label?.match(/^Part (\d+)( \(\d+\))?$/);
+  return m ? t("Part {n}", { n: m[1] }) + (m[2] ?? "") : label;
+};
 
 type View = { kind: "list" } | { kind: "song"; id: string } | { kind: "edit"; id: string | null; text: string };
 
@@ -21,6 +29,7 @@ type View = { kind: "list" } | { kind: "song"; id: string } | { kind: "edit"; id
  * project. While listening, the app recognises the song being sung and follows it.
  */
 export function SongsPanel() {
+  const t = useT();
   const lyricsOn = useDashboard((s) => s.settings?.lyricsDetection ?? true);
   const [songs, setSongs] = useState<SongSummary[]>([]);
   const [view, setView] = useState<View>({ kind: "list" });
@@ -51,8 +60,8 @@ export function SongsPanel() {
     const added = files.length - failed.length;
     setNotice(
       failed.length
-        ? { text: `Imported ${added} of ${files.length}. ${failed.join("; ")}`, error: true }
-        : { text: `Imported ${added} song${added === 1 ? "" : "s"}.` },
+        ? { text: t("Imported {added} of {total}. {errors}", { added, total: files.length, errors: failed.join("; ") }), error: true }
+        : { text: added === 1 ? t("Imported 1 song.") : t("Imported {n} songs.", { n: added }) },
     );
   };
 
@@ -78,7 +87,7 @@ export function SongsPanel() {
         onBack={() => setView({ kind: "list" })}
         onEdit={async () => setView({ kind: "edit", id: song.id, text: await api.getSongText(song.id) })}
         onDelete={async () => {
-          if (!window.confirm(`Delete “${song.title}” from the library?`)) return;
+          if (!window.confirm(t("Delete “{title}” from the library?", { title: song.title }))) return;
           setSongs(await api.deleteSong(song.id));
           setView({ kind: "list" });
         }}
@@ -93,14 +102,14 @@ export function SongsPanel() {
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder={`Search ${songs.length} songs`}
+            placeholder={songs.length === 1 ? t("Search 1 song") : t("Search {n} songs", { n: songs.length })}
             className="min-w-0 flex-1 rounded-md bg-zinc-900 px-2 py-1 text-sm outline-none ring-1 ring-zinc-800 focus:ring-amber-500"
           />
           <button onClick={() => setView({ kind: "edit", id: null, text: "" })} className="rounded bg-amber-600 px-2.5 py-1 text-sm font-medium hover:bg-amber-500">
-            + Add
+            {t("+ Add")}
           </button>
           <button onClick={() => fileRef.current?.click()} className="rounded bg-zinc-800 px-2.5 py-1 text-sm hover:bg-zinc-700">
-            Import
+            {t("Import")}
           </button>
           <input
             ref={fileRef}
@@ -115,19 +124,19 @@ export function SongsPanel() {
           />
         </div>
         <p className="text-xs text-zinc-500">
-          Hearken Studio includes no lyrics. Add the songs your church is licensed to project (e.g. paste from CCLI SongSelect, or import .txt files).
-          {!lyricsOn && " Song recognition is off — turn on “Lyrics” in the top bar."}
+          {t("Hearken Studio includes no lyrics. Add the songs your church is licensed to project (e.g. paste from CCLI SongSelect, or import .txt files).")}
+          {!lyricsOn && ` ${t("Song recognition is off: turn on “Follow worship songs” in Settings.")}`}
         </p>
         {notice && <p className={`text-xs ${notice.error ? "text-red-400" : "text-emerald-400"}`}>{notice.text}</p>}
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto p-2">
-        {songs.length === 0 && <li className="p-2 text-sm text-zinc-500">No songs yet. Add one to have its lyrics follow the singing.</li>}
+        {songs.length === 0 && <li className="p-2 text-sm text-zinc-500">{t("No songs yet. Add one to have its lyrics follow the singing.")}</li>}
         {shown.map((s) => (
           <li key={s.id}>
             <button onClick={() => setView({ kind: "song", id: s.id })} className="w-full rounded-md px-2 py-1.5 text-left hover:bg-zinc-900">
               <span className="font-medium">{s.title}</span>
               <span className="ml-2 text-xs text-zinc-500">
-                {s.sections.length} parts{s.ccli ? ` · CCLI ${s.ccli}` : ""}
+                {s.sections.length === 1 ? t("1 part") : t("{n} parts", { n: s.sections.length })}{s.ccli ? ` · CCLI ${s.ccli}` : ""}
               </span>
             </button>
           </li>
@@ -137,14 +146,14 @@ export function SongsPanel() {
         <button
           onClick={async () => {
             try {
-              setNotice({ text: `Saved ${await api.exportCcliReport(90)}` });
+              setNotice({ text: t("Saved {path}", { path: await api.exportCcliReport(90) }) });
             } catch (e) {
               setNotice({ text: String(e), error: true });
             }
           }}
           className="text-xs text-zinc-400 hover:text-zinc-200"
         >
-          Export song usage for CCLI (last 90 days)
+          {t("Export song usage for CCLI (last 90 days)")}
         </button>
       </div>
     </div>
@@ -152,6 +161,7 @@ export function SongsPanel() {
 }
 
 function SongDetail({ song, onBack, onEdit, onDelete }: { song: SongSummary; onBack: () => void; onEdit: () => void; onDelete: () => void }) {
+  const t = useT();
   const [slides, setSlides] = useState<Slide[]>([]);
   useEffect(() => {
     Promise.all(song.sections.map((_, i) => api.songSlide(song.id, i))).then((all) => setSlides(all.filter((s): s is Slide => !!s)));
@@ -160,25 +170,25 @@ function SongDetail({ song, onBack, onEdit, onDelete }: { song: SongSummary; onB
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-none items-center gap-2 border-b border-zinc-800 p-3">
-        <button onClick={onBack} className="rounded px-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label="Back to songs">
+        <button onClick={onBack} className="rounded px-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={t("Back to songs")}>
           ←
         </button>
         <div className="min-w-0 flex-1">
           <div className="truncate font-semibold">{song.title}</div>
           <div className="text-xs text-zinc-500">
-            {[song.author, song.ccli && `CCLI ${song.ccli}`].filter(Boolean).join(" · ") || "No CCLI number"}
+            {[song.author, song.ccli && `CCLI ${song.ccli}`].filter(Boolean).join(" · ") || t("No CCLI number")}
           </div>
         </div>
         <button onClick={onEdit} className="rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700">
-          Edit
+          {t("Edit")}
         </button>
         <button onClick={onDelete} className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-950">
-          Delete
+          {t("Delete")}
         </button>
       </div>
       <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
         {slides.map((s) => (
-          <SlideRow key={s.id} slide={s} title={song.sections[s.song?.section ?? 0]} />
+          <SlideRow key={s.id} slide={s} title={sectionTitle(song.sections[s.song?.section ?? 0], t)} />
         ))}
       </ul>
     </div>
@@ -194,6 +204,7 @@ function SongEditor({
   onCancel: () => void;
   onSaved: (songs: SongSummary[], id: string | null) => void;
 }) {
+  const t = useT();
   const [text, setText] = useState(view.text);
   const [error, setError] = useState<string | null>(null);
   const save = async () => {
@@ -208,12 +219,12 @@ function SongEditor({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
       <p className="text-xs text-zinc-500">
-        First line is the title. Separate parts with a blank line; start a part with “Verse 1”, “Chorus”, “Bridge”… Copyright footer lines are removed.
+        {t("First line is the title. Separate parts with a blank line; start a part with “Verse 1”, “Chorus”, “Bridge”… Copyright footer lines are removed.")}
       </p>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder={TEMPLATE}
+        placeholder={template(t)}
         spellCheck={false}
         autoFocus
         className="min-h-0 flex-1 resize-none rounded-md bg-zinc-900 p-2 font-mono text-sm outline-none ring-1 ring-zinc-800 focus:ring-amber-500"
@@ -221,10 +232,10 @@ function SongEditor({
       {error && <p className="text-xs text-red-400">{error}</p>}
       <div className="flex gap-2">
         <button onClick={save} className="rounded bg-amber-600 px-3 py-1 text-sm font-medium hover:bg-amber-500">
-          Save song
+          {t("Save song")}
         </button>
         <button onClick={onCancel} className="rounded bg-zinc-800 px-3 py-1 text-sm hover:bg-zinc-700">
-          Cancel
+          {t("Cancel")}
         </button>
       </div>
     </div>

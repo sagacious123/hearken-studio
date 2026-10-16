@@ -1,3 +1,4 @@
+import { useT } from "../../lib/i18n";
 import type { Slide } from "../../lib/ipc";
 import { useDashboard } from "../store";
 
@@ -15,6 +16,7 @@ export function SlideRow({
   const goLive = useDashboard((s) => s.goLive);
   const isLive = useDashboard((s) => s.live?.slide?.id === slide.id);
   const isPreview = useDashboard((s) => s.preview?.id === slide.id);
+  const t = useT();
   return (
     <li
       onClick={() => setPreview(slide)}
@@ -45,7 +47,7 @@ export function SlideRow({
         }}
         className="flex-none rounded bg-amber-500 px-2.5 py-1 text-xs font-semibold hover:bg-amber-400"
       >
-        Live
+        {t("Live")}
       </button>
     </li>
   );

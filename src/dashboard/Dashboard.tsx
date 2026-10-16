@@ -1,16 +1,19 @@
 import { useEffect } from "react";
 import { api } from "../lib/ipc";
+import { useT } from "../lib/i18n";
 import { ControlBar } from "./components/ControlBar";
 import { DetectionQueue } from "./components/DetectionQueue";
 import { Finder, Monitors } from "./components/PreviewPane";
 import { Sidebar } from "./components/Sidebar";
 import { PanelHeader, SingingBadge, TranscriptPanel } from "./components/TranscriptPanel";
+import { LanguagePanel, Welcome } from "./components/Language";
 import { LicencePanel, SignInPanel } from "./components/Licence";
 import { StyleDrawer } from "./components/StylePanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { useDashboard } from "./store";
 
 export function Dashboard() {
+  const t = useT();
   const init = useDashboard((s) => s.init);
   const error = useDashboard((s) => s.error);
 
@@ -37,8 +40,8 @@ export function Dashboard() {
       <ControlBar />
       {error && (
         <div className="flex items-start gap-3 bg-red-950 px-4 py-2 text-sm text-red-200">
-          <span className="flex-1">{error}</span>
-          <button onClick={() => useDashboard.setState({ error: null })} className="text-red-300 hover:text-white" aria-label="Dismiss">
+          <span className="flex-1">{t(error)}</span>
+          <button onClick={() => useDashboard.setState({ error: null })} className="text-red-300 hover:text-white" aria-label={t("Dismiss")}>
             ×
           </button>
         </div>
@@ -53,7 +56,7 @@ export function Dashboard() {
             <Finder />
             <div className="grid min-h-0 grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] gap-3">
               <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800 bg-white/[.02]">
-                <PanelHeader title="Transcript">
+                <PanelHeader title={t("Transcript")}>
                   <SingingBadge />
                 </PanelHeader>
                 <TranscriptPanel />
@@ -65,7 +68,9 @@ export function Dashboard() {
         <StyleDrawer />
         <LicencePanel />
         <SignInPanel />
+        <LanguagePanel />
       </div>
+      <Welcome />
     </div>
   );
 }

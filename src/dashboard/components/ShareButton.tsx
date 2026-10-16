@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { useT, type T } from "../../lib/i18n";
 import { api, type ShareInfo } from "../../lib/ipc";
 import { useDashboard } from "../store";
 import { useDismiss } from "../useDismiss";
@@ -20,26 +21,36 @@ const cleanName = (raw: string) =>
 const NAME_STATUS = {
   checking: {
     tone: "text-zinc-400",
-    text: () => "Checking the name on the network…",
+    text: (t: T) => t("Checking the name on the network…"),
   },
   announced: {
     tone: "text-emerald-400",
-    text: (url: string) =>
-      `✓ Phones on this Wi-Fi can open ${url.replace("http://", "")}`,
+    text: (t: T, url: string) =>
+      t("✓ Phones on this Wi-Fi can open {address}", { address: url.replace("http://", "") }),
   },
   conflict: {
     tone: "text-amber-400",
-    text: (url: string) =>
-      `Another device on this network already uses ${url.replace("http://", "")}. Choose a different name.`,
+    text: (t: T, url: string) =>
+      t("Another device on this network already uses {address}. Choose a different name.", {
+        address: url.replace("http://", ""),
+      }),
   },
   failed: {
     tone: "text-amber-400",
-    text: () =>
-      "Couldn't announce the name; phones can use the number address below.",
+    text: (t: T) =>
+      t("Couldn't announce the name; phones can use the number address below."),
   },
 } as const;
 
+/** A translated sentence with elements (bold, colour) where its {placeholders} stand. */
+function rich(text: string, slots: Record<string, React.ReactNode>) {
+  return text
+    .split(/\{(\w+)\}/)
+    .map((part, i) => (i % 2 ? <Fragment key={i}>{slots[part]}</Fragment> : part));
+}
+
 export function ShareButton() {
+  const t = useT();
   const enabled = useDashboard((s) => s.settings?.shareEnabled ?? false);
   const savedName = useDashboard((s) => s.settings?.shareName ?? "hearken");
   const qrLive = useDashboard((s) => !!s.live?.qr);
@@ -96,7 +107,7 @@ export function ShareButton() {
         onClick={() => setOpen(!open)}
         className={`h-9 rounded-lg px-2 text-xs font-bold hover:bg-white/[.06] min-[1300px]:px-3 ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
       >
-        Share
+        {t("Share")}
         {enabled && (
           <span className="ml-1.5 inline-block h-1.5 w-1.5 -translate-y-px rounded-full bg-amber-500" />
         )}
@@ -105,9 +116,9 @@ export function ShareButton() {
         <div className="absolute right-0 top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[22rem] space-y-3 overflow-y-auto overscroll-contain rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
           <label className="flex items-center justify-between gap-3">
             <span>
-              <span className="font-semibold">Share on the local network</span>
+              <span className="font-semibold">{t("Share on the local network")}</span>
               <span className="block text-xs text-zinc-400">
-                Phones, livestream overlay and remote. No internet needed.
+                {t("Phones, livestream overlay and remote. No internet needed.")}
               </span>
             </span>
             <input
@@ -122,7 +133,7 @@ export function ShareButton() {
           )}
 
           <label className="block space-y-1">
-            <span className="text-xs text-zinc-400">Network name</span>
+            <span className="text-xs text-zinc-400">{t("Network name")}</span>
             <span className="flex items-center rounded-md bg-zinc-950 ring-1 ring-zinc-800 focus-within:ring-sky-600">
               <span className="pl-2 text-zinc-500">http://</span>
               <input
@@ -134,7 +145,7 @@ export function ShareButton() {
                   (e.currentTarget as HTMLInputElement).blur()
                 }
                 spellCheck={false}
-                aria-label="Network name"
+                aria-label={t("Network name")}
                 className="min-w-0 flex-1 bg-transparent px-0.5 py-1.5 font-mono text-sm text-zinc-100 outline-none"
               />
               <span className="pr-2 font-mono text-zinc-500">.local</span>
@@ -143,7 +154,7 @@ export function ShareButton() {
               <span
                 className={`block text-xs ${NAME_STATUS[info.nameStatus].tone}`}
               >
-                {NAME_STATUS[info.nameStatus].text(info.phoneUrl)}
+                {NAME_STATUS[info.nameStatus].text(t, info.phoneUrl)}
               </span>
             )}
           </label>
@@ -157,8 +168,9 @@ export function ShareButton() {
                 />
                 <div className="min-w-0 space-y-1.5">
                   <p className="text-xs text-zinc-400">
-                    Congregation: scan to follow the verses on their phone, in
-                    any translation and text size.
+                    {t(
+                      "Congregation: scan to follow the verses on their phone, in any translation and text size.",
+                    )}
                   </p>
                   <button
                     onClick={() =>
@@ -166,34 +178,41 @@ export function ShareButton() {
                     }
                     className={`rounded px-2 py-1 text-xs font-medium ${qrLive ? "bg-amber-600 hover:bg-amber-500" : "bg-zinc-800 hover:bg-zinc-700"}`}
                   >
-                    {qrLive ? "Hide QR on screen" : "Show QR on screen"}
+                    {qrLive ? t("Hide QR on screen") : t("Show QR on screen")}
                   </button>
                 </div>
               </div>
-              <Link label="Phones" url={info.phoneUrl} />
+              <Link label={t("Phones")} url={info.phoneUrl} />
               <PhoneRecap />
               <Link
-                label="Livestream overlay"
+                label={t("Livestream overlay")}
                 url={info.overlayUrl}
-                hint="OBS/vMix: add a Browser source, 1920×1080. Add ?pos=top to move it up."
+                hint={t("OBS/vMix: add a Browser source, 1920×1080. Add ?pos=top to move it up.")}
               />
               <Link
-                label="Remote"
+                label={t("Remote")}
                 url={info.remoteUrl}
-                hint={`Open on your phone and enter PIN ${info.pin}.`}
+                hint={t("Open on your phone and enter PIN {pin}.", { pin: info.pin })}
               />
               <div className="rounded-md bg-zinc-950 p-2 text-xs text-zinc-400 ring-1 ring-zinc-800">
-                Some Android phones can't open{" "}
-                <span className="font-mono">.local</span> addresses. They can
-                use{" "}
-                <span className="select-all font-mono text-sky-300">
-                  {info.ipUrl}
-                </span>{" "}
-                instead; the QR code always works.
+                {rich(
+                  t(
+                    "Some Android phones can't open {local} addresses. They can use {address} instead; the QR code always works.",
+                  ),
+                  {
+                    local: <span className="font-mono">.local</span>,
+                    address: (
+                      <span className="select-all font-mono text-sky-300">
+                        {info.ipUrl}
+                      </span>
+                    ),
+                  },
+                )}
               </div>
               <p className="text-xs text-zinc-500">
-                Devices must be on the same Wi-Fi. If they can't connect, allow
-                Hearken Studio in the computer's firewall.
+                {t(
+                  "Devices must be on the same Wi-Fi. If they can't connect, allow Hearken Studio in the computer's firewall.",
+                )}
               </p>
             </>
           )}
@@ -205,12 +224,13 @@ export function ShareButton() {
 
 /** Whether congregation phones get a Recap button, and whether it includes the sermon notes. */
 function PhoneRecap() {
+  const t = useT();
   const mode = useDashboard((s) => s.settings?.phoneRecap ?? "notes");
   const saveSettings = useDashboard((s) => s.saveSettings);
   return (
     <label className="block space-y-1">
       <span className="text-xs text-zinc-400">
-        Recap on phones (read or download as PDF or Word)
+        {t("Recap on phones (read or download as PDF or Word)")}
       </span>
       <select
         value={mode}
@@ -219,9 +239,9 @@ function PhoneRecap() {
         }
         className="w-full rounded-md bg-zinc-950 px-2 py-1.5 text-sm ring-1 ring-zinc-800 focus:ring-sky-600"
       >
-        <option value="notes">Scriptures, songs and sermon notes</option>
-        <option value="scriptures">Scriptures and songs only</option>
-        <option value="off">Off</option>
+        <option value="notes">{t("Scriptures, songs and sermon notes")}</option>
+        <option value="scriptures">{t("Scriptures and songs only")}</option>
+        <option value="off">{t("Off")}</option>
       </select>
     </label>
   );
@@ -236,6 +256,7 @@ function Link({
   url: string;
   hint?: string;
 }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   return (
     <div>
@@ -256,7 +277,7 @@ function Link({
           }}
           className="flex-none rounded bg-zinc-800 px-1.5 py-0.5 text-xs hover:bg-zinc-700"
         >
-          {copied ? "Copied" : "Copy"}
+          {copied ? t("Copied") : t("Copy")}
         </button>
       </div>
       {hint && (

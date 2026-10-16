@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
+import { locale, useT } from "../../lib/i18n";
 import { api, type LicenceInfo, type LicenceStatus } from "../../lib/ipc";
 import { useDashboard } from "../store";
 
-const date = (unix: number) => new Date(unix * 1000).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+const date = (unix: number) => new Date(unix * 1000).toLocaleDateString(locale(), { day: "numeric", month: "long", year: "numeric" });
 const DAY = 86_400;
 const GRACE_DAYS = 14;
 
 /** Beside the brand: Sign in when signed out, then how long the trial has left or that something
  *  needs attention. Nothing once signed in and licensed. */
 export function LicenceChip() {
+  const t = useT();
   const licence = useDashboard((s) => s.licence);
   const openLicence = useDashboard((s) => s.setLicenceOpen);
   const openSignIn = useDashboard((s) => s.setSignInOpen);
@@ -17,26 +19,26 @@ export function LicenceChip() {
   const chip = ((): [string, Tone] | null => {
     switch (status.state) {
       case "trial":
-        return [`Trial · ${status.daysLeft} ${status.daysLeft === 1 ? "day" : "days"} left`, status.daysLeft <= 7 ? "warn" : "calm"];
+        return [status.daysLeft === 1 ? t("Trial · 1 day left") : t("Trial · {n} days left", { n: status.daysLeft }), status.daysLeft <= 7 ? "warn" : "calm"];
       case "trialOver":
-        return ["Trial ended", "stop"];
+        return [t("Trial ended"), "stop"];
       case "licensed":
-        return status.inGrace ? ["Renew licence", "warn"] : null;
+        return status.inGrace ? [t("Renew licence"), "warn"] : null;
       case "licenceExpired":
-        return ["Licence ended", "stop"];
+        return [t("Licence ended"), "stop"];
       case "clockBehind":
-        return ["Check the date", "stop"];
+        return [t("Check the date"), "stop"];
     }
   })();
   return (
     <>
       {account.state !== "signedIn" && (
-        <button onClick={() => openSignIn(true)} className={`${CHIP} ${TONE.warn}`} title="Sign in to start listening">
-          Sign in
+        <button onClick={() => openSignIn(true)} className={`${CHIP} ${TONE.warn}`} title={t("Sign in to start listening")}>
+          {t("Sign in")}
         </button>
       )}
       {chip && (
-        <button onClick={() => openLicence(true)} className={`${CHIP} ${TONE[chip[1]]}`} title="Account, free trial and licence">
+        <button onClick={() => openLicence(true)} className={`${CHIP} ${TONE[chip[1]]}`} title={t("Account, free trial and licence")}>
           {chip[0]}
         </button>
       )}
@@ -57,7 +59,8 @@ const PRIMARY = "justify-self-start rounded-lg bg-amber-500 px-3.5 py-1.5 font-s
 const LINK = "justify-self-start text-sm font-medium text-amber-200 hover:text-amber-100";
 
 /** A centred dialog over the dashboard, closed with ✕, Escape or a click outside. */
-function Modal({ label, onClose, children }: { label: string; onClose: () => void; children: React.ReactNode }) {
+export function Modal({ label, onClose, children }: { label: string; onClose: () => void; children: React.ReactNode }) {
+  const t = useT();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     addEventListener("keydown", onKey);
@@ -68,7 +71,7 @@ function Modal({ label, onClose, children }: { label: string; onClose: () => voi
       <section role="dialog" aria-modal="true" aria-label={label} className="grid w-full max-w-md gap-5 rounded-2xl bg-zinc-900 p-6 text-sm shadow-2xl ring-1 ring-zinc-700">
         <header className="flex items-center justify-between">
           <h2 className="font-display text-[13px] font-semibold uppercase tracking-[0.2em] text-amber-200">{label}</h2>
-          <button onClick={onClose} className="rounded px-2 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" aria-label="Close">
+          <button onClick={onClose} className="rounded px-2 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" aria-label={t("Close")}>
             ✕
           </button>
         </header>
@@ -87,25 +90,29 @@ function Message({ message }: { message: { ok: boolean; text: string } | null })
   );
 }
 
-/** Signing in, creating the church's account, or asking for a password-reset email. */
+/** The sign-in screen, opened when listening needs an account. */
 export function SignInPanel() {
+  const t = useT();
   const isOpen = useDashboard((s) => s.signInOpen);
   const setOpen = useDashboard((s) => s.setSignInOpen);
+  if (!isOpen) return null;
+  return (
+    <Modal label={t("Account")} onClose={() => setOpen(false)}>
+      <SignInForm onDone={() => setOpen(false)} />
+    </Modal>
+  );
+}
+
+/** Signing in, creating the church's account, or asking for a password-reset email. Also the
+ *  last of the first-run screens. */
+export function SignInForm({ onDone }: { onDone: () => void }) {
+  const t = useT();
   const [mode, setMode] = useState<"signIn" | "create" | "forgot">("signIn");
   const [church, setChurch] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-
-  useEffect(() => {
-    if (isOpen) return;
-    setPassword("");
-    setMessage(null);
-    setMode("signIn");
-  }, [isOpen]);
-
-  if (!isOpen) return null;
 
   const go = (m: typeof mode) => {
     setMode(m);
@@ -119,10 +126,11 @@ export function SignInPanel() {
     try {
       if (mode === "forgot") {
         await api.forgotPassword(email);
-        setMessage({ ok: true, text: "If there’s an account for that email, a link to choose a new password is on its way. Check your spam folder too." });
+        setMessage({ ok: true, text: t("If there’s an account for that email, a link to choose a new password is on its way. Check your spam folder too.") });
       } else {
         const licence = mode === "create" ? await api.signUp(church, email, password) : await api.signIn(email, password);
-        useDashboard.setState({ licence, signInOpen: false });
+        useDashboard.setState({ licence });
+        onDone();
       }
     } catch (err) {
       setMessage({ ok: false, text: String(err) });
@@ -131,15 +139,15 @@ export function SignInPanel() {
     }
   };
 
-  const title = { signIn: "Sign in", create: "Create your account", forgot: "Reset your password" }[mode];
+  const title = { signIn: t("Sign in"), create: t("Create your account"), forgot: t("Reset your password") }[mode];
   return (
-    <Modal label="Account" onClose={() => setOpen(false)}>
+    <>
       <div className="grid gap-1.5">
         <p className="font-scripture text-2xl text-zinc-50">{title}</p>
         <p className="font-light leading-relaxed text-zinc-300">
           {mode === "forgot"
-            ? "We’ll email you a link to choose a new password."
-            : "Signing in needs the internet. After that, Hearken works offline for up to 30 days at a time."}
+            ? t("We’ll email you a link to choose a new password.")
+            : t("Signing in needs the internet. After that, Hearken works offline for up to 30 days at a time.")}
         </p>
       </div>
 
@@ -147,19 +155,19 @@ export function SignInPanel() {
         {mode === "create" && (
           <>
             <label htmlFor="acct-church" className="font-medium text-zinc-200">
-              Church name
+              {t("Church name")}
             </label>
             <input id="acct-church" value={church} onChange={(e) => setChurch(e.target.value)} required maxLength={120} autoComplete="organization" className={FIELD} />
           </>
         )}
         <label htmlFor="acct-email" className="font-medium text-zinc-200">
-          Email
+          {t("Email")}
         </label>
         <input id="acct-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" autoFocus className={FIELD} />
         {mode !== "forgot" && (
           <>
             <label htmlFor="acct-password" className="font-medium text-zinc-200">
-              Password
+              {t("Password")}
             </label>
             <input
               id="acct-password"
@@ -171,11 +179,11 @@ export function SignInPanel() {
               autoComplete={mode === "create" ? "new-password" : "current-password"}
               className={FIELD}
             />
-            {mode === "create" && <p className="text-xs font-light text-zinc-500">At least 8 characters.</p>}
+            {mode === "create" && <p className="text-xs font-light text-zinc-500">{t("At least 8 characters.")}</p>}
           </>
         )}
         <button type="submit" disabled={busy} className={`${PRIMARY} mt-2`}>
-          {busy ? "One moment…" : { signIn: "Sign in", create: "Create account", forgot: "Email me a link" }[mode]}
+          {busy ? t("One moment…") : { signIn: t("Sign in"), create: t("Create account"), forgot: t("Email me a link") }[mode]}
         </button>
       </form>
 
@@ -185,25 +193,26 @@ export function SignInPanel() {
         {mode === "signIn" && (
           <>
             <button onClick={() => go("forgot")} className={LINK}>
-              Forgot your password?
+              {t("Forgot your password?")}
             </button>
             <button onClick={() => go("create")} className={LINK}>
-              New to Hearken? Create an account
+              {t("New to Hearken? Create an account")}
             </button>
           </>
         )}
         {mode !== "signIn" && (
           <button onClick={() => go("signIn")} className={LINK}>
-            {mode === "create" ? "Already have an account? Sign in" : "Back to sign in"}
+            {mode === "create" ? t("Already have an account? Sign in") : t("Back to sign in")}
           </button>
         )}
       </div>
-    </Modal>
+    </>
   );
 }
 
 /** The account, trial or licence, with a place to enter a key and a check against the website. */
 export function LicencePanel() {
+  const t = useT();
   const isOpen = useDashboard((s) => s.licenceOpen);
   const setOpen = useDashboard((s) => s.setLicenceOpen);
   const licence = useDashboard((s) => s.licence);
@@ -225,7 +234,7 @@ export function LicencePanel() {
         what === "check" ? await api.checkLicenceOnline() : what === "activate" ? await api.activateLicence(key) : await api.signOut();
       useDashboard.setState({ licence: next });
       if (what === "activate") setKey("");
-      if (what !== "signOut") setMessage({ ok: true, text: what === "check" ? "Checked with the Hearken website." : "Licence activated. Thank you!" });
+      if (what !== "signOut") setMessage({ ok: true, text: what === "check" ? t("Checked with the Hearken website.") : t("Licence activated. Thank you!") });
     } catch (e) {
       setMessage({ ok: false, text: String(e) });
     } finally {
@@ -234,24 +243,27 @@ export function LicencePanel() {
   };
 
   const { account, status } = licence;
+  const [signedInBefore, signedInAfter] = t("Signed in as {email}").split("{email}");
   return (
-    <Modal label="Licence" onClose={() => setOpen(false)}>
+    <Modal label={t("Licence")} onClose={() => setOpen(false)}>
       <Summary licence={status} />
 
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/[.03] px-3 py-2.5">
         {account.state === "signedIn" ? (
           <>
             <span className="min-w-0 text-zinc-300">
-              Signed in as <span className="font-medium text-zinc-100">{account.email}</span>
+              {signedInBefore}
+              <span className="font-medium text-zinc-100">{account.email}</span>
+              {signedInAfter}
               <span className="block text-xs font-light text-zinc-500">{account.church}</span>
             </span>
             <button onClick={() => run("signOut")} disabled={busy !== null} className="rounded-lg border border-zinc-700 px-3 py-1.5 font-medium text-zinc-200 hover:border-zinc-500 disabled:opacity-50">
-              Sign out
+              {t("Sign out")}
             </button>
           </>
         ) : (
           <>
-            <span className="text-zinc-300">{account.state === "expired" ? `Sign-in for ${account.email} needs renewing.` : "Not signed in."}</span>
+            <span className="text-zinc-300">{account.state === "expired" ? t("Sign-in for {email} needs renewing.", { email: account.email }) : t("Not signed in.")}</span>
             <button
               onClick={() => {
                 setOpen(false);
@@ -259,7 +271,7 @@ export function LicencePanel() {
               }}
               className={PRIMARY}
             >
-              Sign in
+              {t("Sign in")}
             </button>
           </>
         )}
@@ -270,11 +282,11 @@ export function LicencePanel() {
           onClick={() => run("check")}
           disabled={busy !== null}
           className="rounded-lg border border-zinc-700 px-3 py-1.5 font-medium text-zinc-200 hover:border-zinc-500 disabled:opacity-50"
-          title="Renews your sign-in, registers this computer's trial and checks its date with the Hearken website"
+          title={t("Renews your sign-in, registers this computer's trial and checks its date with the Hearken website")}
         >
-          {busy === "check" ? "Checking…" : "Check now"}
+          {busy === "check" ? t("Checking…") : t("Check now")}
         </button>
-        <span className="text-xs font-light text-zinc-500">Needs the internet. Nothing about your services is sent.</span>
+        <span className="text-xs font-light text-zinc-500">{t("Needs the internet. Nothing about your services is sent.")}</span>
       </div>
 
       <form
@@ -285,7 +297,7 @@ export function LicencePanel() {
         }}
       >
         <label htmlFor="licence-key" className="font-medium text-zinc-200">
-          {status.state === "licensed" ? "New licence key" : "Licence key"}
+          {status.state === "licensed" ? t("New licence key") : t("Licence key")}
         </label>
         <textarea
           id="licence-key"
@@ -293,52 +305,64 @@ export function LicencePanel() {
           onChange={(e) => setKey(e.target.value)}
           rows={3}
           spellCheck={false}
-          placeholder="Paste the key from your email (it starts with HK1.)"
+          placeholder={t("Paste the key from your email (it starts with HK1.)")}
           className={`${FIELD} resize-none font-mono text-xs placeholder:font-ui`}
         />
         <button type="submit" disabled={!key.trim() || busy !== null} className={PRIMARY}>
-          {busy === "activate" ? "Activating…" : "Activate"}
+          {busy === "activate" ? t("Activating…") : t("Activate")}
         </button>
       </form>
 
       <Message message={message} />
-      {status.state === "trial" && <p className="text-xs font-light text-zinc-500">Paid plans will be announced before your trial ends.</p>}
+      {status.state === "trial" && <p className="text-xs font-light text-zinc-500">{t("Paid plans will be announced before your trial ends.")}</p>}
     </Modal>
   );
 }
 
 function Summary({ licence }: { licence: LicenceStatus }) {
+  const t = useT();
   const [title, ...lines] = ((): string[] => {
     switch (licence.state) {
       case "trial":
         return [
-          "Free trial",
-          `Ends on ${date(licence.ends)}: ${licence.daysLeft} ${licence.daysLeft === 1 ? "day" : "days"} left. Every feature is included.`,
+          t("Free trial"),
+          licence.daysLeft === 1
+            ? t("Ends on {date}: 1 day left. Every feature is included.", { date: date(licence.ends) })
+            : t("Ends on {date}: {n} days left. Every feature is included.", { date: date(licence.ends), n: licence.daysLeft }),
           licence.registered
-            ? "Registered for this computer."
-            : "Hearken registers this computer’s trial the next time it’s online, using an anonymous ID.",
+            ? t("Registered for this computer.")
+            : t("Hearken registers this computer’s trial the next time it’s online, using an anonymous ID."),
         ];
       case "trialOver":
         return [
-          "Your free trial has ended",
-          `It ended on ${date(licence.ended)}. Search, the screen and phones still work. To listen again, enter a licence key.`,
+          t("Your free trial has ended"),
+          t("It ended on {date}. Search, the screen and phones still work. To listen again, enter a licence key.", { date: date(licence.ended) }),
         ];
       case "licensed":
         return licence.inGrace
           ? [
-              `Licensed to ${licence.church}`,
-              `Your licence ended on ${date(licence.expires)}. Listening keeps working until ${date(licence.expires + GRACE_DAYS * DAY)}: enter your new key before then.`,
+              t("Licensed to {church}", { church: licence.church }),
+              t("Your licence ended on {date}. Listening keeps working until {until}: enter your new key before then.", {
+                date: date(licence.expires),
+                until: date(licence.expires + GRACE_DAYS * DAY),
+              }),
             ]
-          : [`Licensed to ${licence.church}`, `${capital(licence.plan)} plan, until ${date(licence.expires)}.`];
+          : [t("Licensed to {church}", { church: licence.church }), t("{plan} plan, until {date}.", { plan: capital(licence.plan), date: date(licence.expires) })];
       case "licenceExpired":
         return [
-          "Your licence has ended",
-          `The licence for ${licence.church} ended on ${date(licence.expired)}. Search, the screen and phones still work. To listen again, enter your new key.`,
+          t("Your licence has ended"),
+          t("The licence for {church} ended on {date}. Search, the screen and phones still work. To listen again, enter your new key.", {
+            church: licence.church,
+            date: date(licence.expired),
+          }),
         ];
       case "clockBehind":
         return [
-          "This computer’s date looks wrong",
-          `It says ${date(licence.now)}, but Hearken was already used on ${date(licence.seen)}. Set the correct date and time, or connect to the internet and click Check now.`,
+          t("This computer’s date looks wrong"),
+          t("It says {now}, but Hearken was already used on {seen}. Set the correct date and time, or connect to the internet and click Check now.", {
+            now: date(licence.now),
+            seen: date(licence.seen),
+          }),
         ];
     }
   })();

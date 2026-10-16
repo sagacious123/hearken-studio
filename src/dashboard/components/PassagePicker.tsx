@@ -1,13 +1,16 @@
 import { useEffect, useId, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useT, useUiLanguage, type UiLanguage } from "../../lib/i18n";
 import { api, type BookInfo, type Slide } from "../../lib/ipc";
 import { useDashboard } from "../store";
 
 /** Most verses on one slide (matches the Rust side); longer ranges are stepped with ▶. */
 const MAX_SLIDE_VERSES = 6;
 
+/** Lowercase without accents: "Genèse" → "genese". */
+const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
 const norm = (s: string) =>
-  s
-    .toLowerCase()
+  fold(s)
     .replace(/^([123])(?=[a-z])/, "$1 ") // "1cor" → "1 cor"
     .replace(/\s+/g, " ")
     .trim();
@@ -39,14 +42,17 @@ const armedFor = (armed: string | null, key: string) => armed !== null && armed 
 /** Focus (and select) a field after React has rendered, e.g. once it's no longer disabled. */
 const focusSoon = (el: HTMLInputElement | null) => requestAnimationFrame(() => el?.focus());
 
+/** A book's name in the interface language (English when there's none). */
+const bookName = (b: BookInfo, lang: UiLanguage) => (lang === "en" ? b.name : (b.names[lang] ?? b.name));
+
 /** Books matching what's typed: name or alias prefix first, then anywhere, in Bible order. */
 function filterBooks(books: BookInfo[], query: string): BookInfo[] {
   const q = norm(query);
   if (!q) return books;
   const scored = books
     .map((b) => {
-      const name = b.name.toLowerCase();
-      const score = name.startsWith(q) ? 0 : b.aliases.some((a) => a.startsWith(q)) ? 1 : name.includes(q) ? 2 : b.aliases.some((a) => a.includes(q)) ? 3 : 9;
+      const names = [b.name, ...Object.values(b.names)].map(fold);
+      const score = names.some((n) => n.startsWith(q)) ? 0 : b.aliases.some((a) => a.startsWith(q)) ? 1 : names.some((n) => n.includes(q)) ? 2 : b.aliases.some((a) => a.includes(q)) ? 3 : 9;
       return { b, score };
     })
     .filter((x) => x.score < 9);
@@ -61,6 +67,8 @@ export function PassagePicker() {
   const translation = useDashboard((s) => s.settings?.translation ?? "KJV");
   const setPreview = useDashboard((s) => s.setPreview);
   const goLive = useDashboard((s) => s.goLive);
+  const t = useT();
+  const lang = useUiLanguage();
   const [books, setBooks] = useState<BookInfo[]>([]);
   const [book, setBook] = useState<BookInfo | null>(null);
   const [chapter, setChapter] = useState("");
@@ -84,13 +92,15 @@ export function PassagePicker() {
   const problem = !book
     ? null
     : chapter && (ch < 1 || ch > chapters || !Number.isInteger(ch))
-      ? `${book.name} has ${chapters} chapter${chapters === 1 ? "" : "s"}`
+      ? chapters === 1
+        ? t("{book} has 1 chapter", { book: bookName(book, lang) })
+        : t("{book} has {n} chapters", { book: bookName(book, lang), n: chapters })
       : from && (vFrom < 1 || vFrom > maxVerse || !Number.isInteger(vFrom))
-        ? `${book.name} ${ch} has ${maxVerse} verses`
+        ? t("{book} {chapter} has {n} verses", { book: bookName(book, lang), chapter: ch, n: maxVerse })
         : to && (vTo < vFrom || vTo > maxVerse || !Number.isInteger(vTo))
           ? vTo < vFrom
-            ? "The last verse comes before the first"
-            : `${book.name} ${ch} has ${maxVerse} verses`
+            ? t("The last verse comes before the first")
+            : t("{book} {chapter} has {n} verses", { book: bookName(book, lang), chapter: ch, n: maxVerse })
           : null;
   const ready = !!book && !!chapter && !problem;
 
@@ -161,9 +171,9 @@ export function PassagePicker() {
           onKeyDown={(e) => onEnter(e, from ? undefined : () => focusSoon(fromRef.current))}
           {...selectOnFocus}
           inputMode="numeric"
-          placeholder="Ch."
-          aria-label="Chapter"
-          title={book ? `1–${chapters}` : "Pick a book first"}
+          placeholder={t("Ch.")}
+          aria-label={t("Chapter")}
+          title={book ? `1–${chapters}` : t("Pick a book first")}
           disabled={!book}
           className={num}
         />
@@ -175,9 +185,9 @@ export function PassagePicker() {
           onKeyDown={(e) => onEnter(e)}
           {...selectOnFocus}
           inputMode="numeric"
-          placeholder="V."
-          aria-label="First verse"
-          title={maxVerse ? `1–${maxVerse}` : "Whole chapter if empty"}
+          placeholder={t("V.")}
+          aria-label={t("First verse")}
+          title={maxVerse ? `1–${maxVerse}` : t("Whole chapter if empty")}
           disabled={!book || !chapter}
           className={num}
         />
@@ -189,15 +199,15 @@ export function PassagePicker() {
           onKeyDown={(e) => onEnter(e)}
           {...selectOnFocus}
           inputMode="numeric"
-          placeholder="to"
-          aria-label="Last verse (optional)"
+          placeholder={t("to")}
+          aria-label={t("Last verse (optional)")}
           disabled={!from}
           className={num}
         />
       </div>
       {(problem || rangeLong || again) && (
         <p className={`text-xs ${problem ? "text-red-400" : again ? "text-amber-300" : "text-zinc-500"}`}>
-          {problem ?? (again ? "Press Enter again to go live" : `Shows ${MAX_SLIDE_VERSES} verses at a time; use Verse ▶ for the rest.`)}
+          {problem ?? (again ? t("Press Enter again to go live") : t("Shows {n} verses at a time; use Verse ▶ for the rest.", { n: MAX_SLIDE_VERSES }))}
         </p>
       )}
     </div>
@@ -211,6 +221,8 @@ function BookCombobox({ books, value, onPick }: { books: BookInfo[]; value: Book
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
   const matches = useMemo(() => filterBooks(books, query), [books, query]);
+  const t = useT();
+  const lang = useUiLanguage();
 
   useEffect(() => {
     listRef.current?.children[active]?.scrollIntoView({ block: "nearest" });
@@ -230,9 +242,9 @@ function BookCombobox({ books, value, onPick }: { books: BookInfo[]; value: Book
         aria-expanded={open}
         aria-controls={listId}
         aria-activedescendant={open && matches[active] ? `${listId}-${matches[active].id}` : undefined}
-        aria-label="Book"
-        value={open ? query : (value?.name ?? "")}
-        placeholder="Book"
+        aria-label={t("Book")}
+        value={open ? query : (value ? bookName(value, lang) : "")}
+        placeholder={t("Book")}
         onFocus={(e) => {
           setOpen(true);
           setActive(0);
@@ -266,7 +278,7 @@ function BookCombobox({ books, value, onPick }: { books: BookInfo[]; value: Book
       />
       {open && (
         <ul ref={listRef} id={listId} role="listbox" className="absolute inset-x-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-md bg-zinc-900 py-1 shadow-xl ring-1 ring-zinc-700">
-          {matches.length === 0 && <li className="px-3 py-1.5 text-sm text-zinc-500">No book matches “{query}”</li>}
+          {matches.length === 0 && <li className="px-3 py-1.5 text-sm text-zinc-500">{t("No book matches “{query}”", { query })}</li>}
           {matches.map((b, i) => (
             <li
               key={b.id}
@@ -280,8 +292,8 @@ function BookCombobox({ books, value, onPick }: { books: BookInfo[]; value: Book
               onMouseEnter={() => setActive(i)}
               className={`flex cursor-pointer items-baseline justify-between px-3 py-1 text-sm ${i === active ? "bg-amber-600 text-white" : "text-zinc-200"}`}
             >
-              {b.name}
-              <span className={`text-xs ${i === active ? "text-amber-100" : "text-zinc-500"}`}>{b.verses.length} ch.</span>
+              {bookName(b, lang)}
+              <span className={`text-xs ${i === active ? "text-amber-100" : "text-zinc-500"}`}>{t("{n} ch.", { n: b.verses.length })}</span>
             </li>
           ))}
         </ul>

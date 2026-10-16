@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useT } from "../../lib/i18n";
 import { api, events, type LibraryItem } from "../../lib/ipc";
 import { useDashboard } from "../store";
 import { useDismiss } from "../useDismiss";
@@ -17,6 +18,7 @@ export function BibleLibrary({
   onOpenChange?: (open: boolean) => void;
   showTrigger?: boolean;
 } = {}) {
+  const t = useT();
   const [openState, setOpenState] = useState(false);
   const open = openProp ?? openState;
   const setOpen = (o: boolean) =>
@@ -75,9 +77,9 @@ export function BibleLibrary({
             setOpen(!open);
           }}
           className="h-9 rounded-lg px-2 text-sm font-medium hover:bg-white/[.06] min-[1300px]:px-3 text-zinc-300"
-          title="Download Bibles in other languages"
+          title={t("Download Bibles in other languages")}
         >
-          Bibles
+          {t("Bibles")}
         </button>
       )}
       {open && (
@@ -85,10 +87,11 @@ export function BibleLibrary({
           className={`absolute ${alignRight ? "right-0" : "left-0"} top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[26rem] max-w-[calc(100vw-2rem)] space-y-2 overflow-y-auto overscroll-contain rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl`}
         >
           <div>
-            <h3 className="font-semibold">Bible library</h3>
+            <h3 className="font-semibold">{t("Bible library")}</h3>
             <p className="text-xs text-zinc-400">
-              Download once (about 4–5 MB each, from eBible.org), then use
-              offline: on screen, side by side, and on congregation phones.
+              {t(
+                "Download once (about 4–5 MB each, from eBible.org), then use offline: on screen, side by side, and on congregation phones.",
+              )}
             </p>
           </div>
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -99,7 +102,7 @@ export function BibleLibrary({
                 <li key={it.code} className="flex items-start gap-3 py-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
-                      <span className="font-medium">{it.language}</span>
+                      <span className="font-medium">{t(it.language)}</span>
                       <span className="font-mono text-xs text-zinc-500">
                         {it.code}
                       </span>
@@ -117,24 +120,24 @@ export function BibleLibrary({
                   {progress !== undefined ? (
                     <span className="w-20 flex-none pt-1 text-right text-xs tabular-nums text-sky-300">
                       {it.installed
-                        ? "Removing…"
+                        ? t("Removing…")
                         : progress >= 0.99
-                          ? "Installing…"
-                          : `${Math.round(progress * 100)}%`}
+                          ? t("Installing…")
+                          : t("{n}%", { n: Math.round(progress * 100) })}
                     </span>
                   ) : it.installed ? (
                     <button
                       onClick={() => void run(it.code, api.removeTranslation)}
                       className="flex-none rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-700"
                     >
-                      Remove
+                      {t("Remove")}
                     </button>
                   ) : (
                     <button
                       onClick={() => void run(it.code, api.installTranslation)}
                       className="flex-none rounded bg-sky-700 px-2 py-1 text-xs font-medium hover:bg-sky-600"
                     >
-                      Download
+                      {t("Download")}
                     </button>
                   )}
                 </li>
@@ -142,8 +145,9 @@ export function BibleLibrary({
             })}
           </ul>
           <p className="text-[11px] text-zinc-500">
-            Detection still listens for English. Choose a downloaded Bible as
-            the translation or side by side; phones can pick any of them.
+            {t(
+              "Choose a downloaded Bible as the translation or side by side; phones can pick any of them. To listen in another language, choose it under Settings → Language.",
+            )}
           </p>
         </div>
       )}

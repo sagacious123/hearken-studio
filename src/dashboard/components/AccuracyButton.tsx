@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   api,
@@ -6,8 +6,24 @@ import {
   type MeaningStatus,
   type ModelStatus,
 } from "../../lib/ipc";
+import { locale, useT, type T } from "../../lib/i18n";
 import { useDashboard } from "../store";
 import { useDismiss } from "../useDismiss";
+
+/** A translated sentence with elements (bold, colour) where its {placeholders} stand. */
+function rich(text: string, slots: Record<string, React.ReactNode>) {
+  return text
+    .split(/\{(\w+)\}/)
+    .map((part, i) => (i % 2 ? <Fragment key={i}>{slots[part]}</Fragment> : part));
+}
+
+/** The backend's speed note ("high quality, 3.1 s per 10 s of speech") in the UI language. */
+function speedText(t: T, speed: string) {
+  const m = /^(.+), ([\d.]+) s per 10 s of speech$/.exec(speed);
+  if (!m) return t(speed);
+  const seconds = Number(m[2]).toLocaleString(locale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return t("{quality}, {seconds} s per 10 s of speech", { quality: t(m[1]), seconds });
+}
 
 type Progress = Record<
   string,
@@ -29,6 +45,7 @@ export function AccuracyButton({
   onOpenChange?: (open: boolean) => void;
   showTrigger?: boolean;
 } = {}) {
+  const t = useT();
   const { settings, saveSettings, running, info, profile } = useDashboard(
     useShallow((s) => ({
       settings: s.settings,
@@ -70,15 +87,19 @@ export function AccuracyButton({
     models.some((m) => m.id === id && m.installed);
   const known = (id: string) => models.find((m) => m.id === id)?.usable;
   const gpu = settings.gpuOverride ?? profile?.useGpu ?? false;
+  // Sermons in other languages need the multilingual Small; English ones the English Small.
+  const multilingual = settings.languages.some((c) => c !== "en");
+  const small = multilingual ? "small" : "small.en";
+  const forLanguages = (m: ModelStatus) => m.accuracy && m.id !== (multilingual ? "small.en" : "small");
   // Mirrors the Rust choice: the most accurate model proven to keep up here, else an untested
   // one (timed on first use; GPU machines try Turbo first, CPU-only Small).
   const autoPick =
-    ["large-v3-turbo", "small.en"].find(
+    ["large-v3-turbo", small].find(
       (id) => installed(id) && known(id) === true,
     ) ??
     (gpu
-      ? ["large-v3-turbo", "small.en"]
-      : ["small.en", "large-v3-turbo"]
+      ? ["large-v3-turbo", small]
+      : [small, "large-v3-turbo"]
     ).find((id) => installed(id) && known(id) == null);
   const effective =
     choice === "off"
@@ -89,7 +110,7 @@ export function AccuracyButton({
           ? choice
           : null;
   const label = (id?: string | null) =>
-    models.find((m) => m.id === id)?.label ?? id ?? "";
+    t(models.find((m) => m.id === id)?.label ?? id ?? "");
   const downloading = Object.keys(progress).filter((id) => !installed(id));
   // A model pinned with "Always" that its speed test says can't keep up on this computer.
   const tooSlow =
@@ -119,78 +140,84 @@ export function AccuracyButton({
         <button
           onClick={() => setOpen(!open)}
           className={`h-9 rounded-lg px-2 text-sm font-medium hover:bg-white/[.06] min-[1300px]:px-3 ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
-          title="Transcription accuracy and vocabulary"
+          title={t("Transcription accuracy and vocabulary")}
         >
-          Accuracy{downloading.length ? " ↓" : ""}
+          {t("Accuracy")}{downloading.length ? " ↓" : ""}
           {tooSlow && <span className="ml-1 text-amber-300">⚠</span>}
         </button>
       )}
       {open && (
         <div className="absolute right-0 top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[26rem] space-y-4 overflow-y-auto overscroll-contain rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
           <div>
-            <h3 className="font-semibold">Transcription accuracy</h3>
+            <h3 className="font-semibold">{t("Transcription accuracy")}</h3>
             <p className="mt-1 text-xs text-zinc-400">
-              A fast model keeps live updates quick. A larger model then
-              re-checks each finished sentence (lines marked
-              <span className="text-emerald-500"> ✓</span>), giving better
-              words, names and accents in the transcript, quotes and archive.
+              {rich(
+                t(
+                  "A fast model keeps live updates quick. A larger model then re-checks each finished sentence (lines marked {check}), giving better words, names and accents in the transcript, quotes and archive.",
+                ),
+                { check: <span className="text-emerald-500">✓</span> },
+              )}
             </p>
             <p className="mt-2 text-xs text-zinc-300">
-              Now: live <b>{info?.model ?? profile?.model ?? "base.en"}</b>
+              {t("Now: live")} <b>{info?.model ?? profile?.model ?? "base.en"}</b>
               {running ? (
                 info?.refineModel ? (
                   <>
                     {" "}
-                    · accuracy pass <b>{label(info.refineModel)}</b>
+                    · {t("accuracy pass")} <b>{label(info.refineModel)}</b>
                   </>
                 ) : (
-                  " · no accuracy pass"
+                  ` · ${t("no accuracy pass")}`
                 )
               ) : effective ? (
                 <>
                   {" "}
-                  · accuracy pass <b>{label(effective)}</b>
+                  · {t("accuracy pass")} <b>{label(effective)}</b>
                 </>
               ) : (
-                " · accuracy pass off"
+                ` · ${t("accuracy pass off")}`
               )}
             </p>
           </div>
 
           {!gpu && (
             <p className="rounded-md bg-zinc-950 p-2 text-xs text-zinc-400 ring-1 ring-zinc-800">
-              This computer has no graphics chip the models can use, so the
-              accuracy pass runs gently in the background (one low-priority
-              thread) to keep live detection fast. It still adds roughly 0.1–0.2
-              s to detections; choose <b>Off</b> for the fastest possible
-              detection.
+              {t(
+                "This computer has no graphics chip the models can use, so the accuracy pass runs gently in the background (one low-priority thread) to keep live detection fast.",
+              )}{" "}
+              {rich(
+                t(
+                  "It still adds roughly 0.1–0.2 s to detections; choose {off} for the fastest possible detection.",
+                ),
+                { off: <b>{t("Off")}</b> },
+              )}
             </p>
           )}
 
           <fieldset className="space-y-1.5">
             <legend className="mb-1 text-xs font-semibold text-zinc-400">
-              Accuracy pass
+              {t("Accuracy pass")}
             </legend>
             <Choice
               value="auto"
               current={choice}
               onPick={(v) => saveSettings({ accuracyModel: v })}
             >
-              Automatic{" "}
+              {t("Automatic")}{" "}
               {autoPick ? (
                 <span className="text-zinc-500">
-                  (uses {label(autoPick)} on this computer)
+                  {t("(uses {model} on this computer)", { model: label(autoPick) })}
                 </span>
-              ) : models.some((m) => m.accuracy && m.installed) ? (
+              ) : models.some((m) => forLanguages(m) && m.installed) ? (
                 <span className="text-amber-400">
-                  (installed models are too slow here, so it's off)
+                  {t("(installed models are too slow here, so it's off)")}
                 </span>
               ) : (
-                <span className="text-amber-400">(download a model below)</span>
+                <span className="text-amber-400">{t("(download a model below)")}</span>
               )}
             </Choice>
             {models
-              .filter((m) => m.accuracy)
+              .filter(forLanguages)
               .map((m) => (
                 <Choice
                   key={m.id}
@@ -199,7 +226,7 @@ export function AccuracyButton({
                   onPick={(v) => saveSettings({ accuracyModel: v })}
                   disabled={!m.installed}
                 >
-                  Always {m.label}
+                  {t("Always {model}", { model: t(m.label) })}
                 </Choice>
               ))}
             <Choice
@@ -207,31 +234,33 @@ export function AccuracyButton({
               current={choice}
               onPick={(v) => saveSettings({ accuracyModel: v })}
             >
-              Off{" "}
-              <span className="text-zinc-500">(quick transcription only)</span>
+              {t("Off")}{" "}
+              <span className="text-zinc-500">{t("(quick transcription only)")}</span>
             </Choice>
           </fieldset>
           {tooSlow && (
             <div className="space-y-2 rounded-md bg-amber-950/60 p-3 text-xs text-amber-200 ring-1 ring-amber-800">
               <p>
-                <b>{label(choice)}</b> is too slow on this computer while
-                listening, so references it finds would come too late. Sentences
-                it can't reach in time keep the quick text, and its late finds
-                aren't queued.
+                {rich(
+                  t(
+                    "{model} is too slow on this computer while listening, so references it finds would come too late. Sentences it can't reach in time keep the quick text, and its late finds aren't queued.",
+                  ),
+                  { model: <b>{label(choice)}</b> },
+                )}
               </p>
               <button
                 onClick={() => void saveSettings({ accuracyModel: "auto" })}
                 className="rounded bg-amber-600 px-2 py-1 font-medium text-white hover:bg-amber-500"
               >
-                Use Automatic
+                {t("Use Automatic")}
               </button>
             </div>
           )}
 
           <div className="space-y-2">
-            <h4 className="text-xs font-semibold text-zinc-400">Models</h4>
+            <h4 className="text-xs font-semibold text-zinc-400">{t("Models")}</h4>
             {models
-              .filter((m) => m.accuracy)
+              .filter(forLanguages)
               .map((m) => {
                 const p = progress[m.id];
                 return (
@@ -240,19 +269,19 @@ export function AccuracyButton({
                     className="rounded-md bg-zinc-950 p-2.5 ring-1 ring-zinc-800"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{m.label}</span>
+                      <span className="font-medium">{t(m.label)}</span>
                       <span className="text-xs text-zinc-500">
-                        {m.sizeMb} MB
+                        {t("{mb} MB", { mb: m.sizeMb })}
                       </span>
                       <span className="ml-auto">
                         {m.installed ? (
                           <button
                             disabled={running}
-                            title={running ? "Stop listening first" : undefined}
+                            title={running ? t("Stop listening first") : undefined}
                             onClick={() => {
                               if (
                                 !window.confirm(
-                                  `Remove ${m.label}? You can download it again later.`,
+                                  t("Remove {model}? You can download it again later.", { model: t(m.label) }),
                                 )
                               )
                                 return;
@@ -263,26 +292,26 @@ export function AccuracyButton({
                             }}
                             className="text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40"
                           >
-                            ✓ Installed · Remove
+                            {t("✓ Installed · Remove")}
                           </button>
                         ) : p ? (
                           <button
                             onClick={() => void api.cancelModelDownload(m.id)}
                             className="text-xs text-zinc-400 hover:text-zinc-100"
                           >
-                            Cancel
+                            {t("Cancel")}
                           </button>
                         ) : (
                           <button
                             onClick={() => void download(m.id)}
                             className="rounded bg-emerald-700 px-2 py-0.5 text-xs font-medium hover:bg-emerald-600"
                           >
-                            Download
+                            {t("Download")}
                           </button>
                         )}
                       </span>
                     </div>
-                    <p className="mt-1 text-xs text-zinc-500">{m.note}</p>
+                    <p className="mt-1 text-xs text-zinc-500">{t(m.note)}</p>
                     {m.installed && (
                       <p className="mt-1 flex items-center gap-2 text-xs">
                         <span
@@ -295,15 +324,15 @@ export function AccuracyButton({
                           }
                         >
                           {m.speed
-                            ? `On this computer: ${m.speed}`
-                            : "Speed not tested yet (tested the first time it's used)"}
+                            ? t("On this computer: {speed}", { speed: speedText(t, m.speed) })
+                            : t("Speed not tested yet (tested the first time it's used)")}
                         </span>
                         <button
                           disabled={running || !!p}
                           title={
                             running
-                              ? "Stop listening first"
-                              : "Close other heavy apps for a fair result"
+                              ? t("Stop listening first")
+                              : t("Close other heavy apps for a fair result")
                           }
                           onClick={() => {
                             setProgress((prev) => ({
@@ -324,13 +353,13 @@ export function AccuracyButton({
                           }}
                           className="ml-auto text-zinc-500 underline-offset-2 hover:text-zinc-200 hover:underline disabled:opacity-40"
                         >
-                          {p?.phase === "testing" ? "Testing…" : "Test speed"}
+                          {p?.phase === "testing" ? t("Testing…") : t("Test speed")}
                         </button>
                       </p>
                     )}
                     {p && p.phase === "testing" && !m.installed && (
                       <p className="mt-2 text-xs text-zinc-400">
-                        Testing speed on this computer…
+                        {t("Testing speed on this computer…")}
                       </p>
                     )}
                     {p && p.phase === "download" && !m.installed && (
@@ -344,8 +373,10 @@ export function AccuracyButton({
                           />
                         </div>
                         <span className="w-20 text-right font-mono text-[11px] text-zinc-400">
-                          {Math.round(p.received / 1e6)} /{" "}
-                          {Math.round(p.total / 1e6)} MB
+                          {t("{received} / {total} MB", {
+                            received: Math.round(p.received / 1e6),
+                            total: Math.round(p.total / 1e6),
+                          })}
                         </span>
                       </div>
                     )}
@@ -359,7 +390,7 @@ export function AccuracyButton({
 
           <label className="block space-y-1.5">
             <span className="text-xs font-semibold text-zinc-400">
-              Names and words to listen for
+              {t("Names and words to listen for")}
             </span>
             <textarea
               value={vocab}
@@ -369,22 +400,22 @@ export function AccuracyButton({
                 void saveSettings({ vocabulary: vocab })
               }
               rows={3}
-              placeholder={
-                "Pastor Johnson, Grace Chapel, Shiloh,\nHoly Ghost, Ebenezer"
-              }
+              placeholder={t(
+                "Pastor Johnson, Grace Chapel, Shiloh,\nHoly Ghost, Ebenezer",
+              )}
               className="w-full resize-y rounded-md bg-zinc-950 p-2 text-sm outline-none ring-1 ring-zinc-800 focus:ring-emerald-600"
             />
             <span className="block text-xs text-zinc-500">
-              Pastors' and members' names, the church, places, and phrases that
-              often come out wrong. Comma or one per line. Bible book names and
-              today's sermon plan are added automatically.
+              {t(
+                "Pastors' and members' names, the church, places, and phrases that often come out wrong. Comma or one per line. Bible book names and today's sermon plan are added automatically.",
+              )}
             </span>
           </label>
 
           <p className="text-xs text-zinc-500">
             {running
-              ? "Model changes apply the next time you start listening. Vocabulary applies right away."
-              : "Changes apply when you start listening."}
+              ? t("Model changes apply the next time you start listening. Vocabulary applies right away.")
+              : t("Changes apply when you start listening.")}
           </p>
         </div>
       )}
@@ -394,6 +425,7 @@ export function AccuracyButton({
 
 /** Search by meaning: verses said in other words, live and in the search box. */
 function MeaningSection() {
+  const t = useT();
   const enabled = useDashboard((s) => s.settings?.meaningDetection ?? true);
   const saveSettings = useDashboard((s) => s.saveSettings);
   const [status, setStatus] = useState<MeaningStatus | null>(null);
@@ -427,7 +459,7 @@ function MeaningSection() {
     <div className="space-y-1.5 rounded-md bg-zinc-950 p-3 ring-1 ring-zinc-800">
       <div className="flex items-center gap-2">
         <span className="text-xs font-semibold text-zinc-300">
-          Verses said in other words
+          {t("Verses said in other words")}
         </span>
         {status?.installed && (
           <label className="ml-auto flex items-center gap-1.5 text-xs text-zinc-400">
@@ -439,14 +471,14 @@ function MeaningSection() {
               }
               className="accent-emerald-500"
             />
-            Suggest live
+            {t("Suggest live")}
           </label>
         )}
       </div>
       <p className="text-xs text-zinc-500">
-        Finds the verse when someone paraphrases it (“don't worry about
-        tomorrow” → Matthew 6:34), live as a suggestion and under “By meaning”
-        in the search box. Works offline once downloaded.
+        {t(
+          "Finds the verse when someone paraphrases it (“don't worry about tomorrow” → Matthew 6:34), live as a suggestion and under “By meaning” in the search box. Works offline once downloaded.",
+        )}
       </p>
       {error && <p className="text-xs text-red-400">{error}</p>}
       {progress !== null ? (
@@ -458,7 +490,7 @@ function MeaningSection() {
             />
           </div>
           <span className="w-16 text-right font-mono text-[11px] text-zinc-400">
-            {progress >= 1 ? "Loading…" : `${Math.round(progress * 100)}%`}
+            {progress >= 1 ? t("Loading…") : t("{n}%", { n: Math.round(progress * 100) })}
           </span>
         </div>
       ) : status && !status.installed ? (
@@ -466,11 +498,11 @@ function MeaningSection() {
           onClick={() => void download()}
           className="rounded bg-emerald-700 px-2 py-1 text-xs font-medium hover:bg-emerald-600"
         >
-          Download ({Math.round(status.downloadMb)} MB)
+          {t("Download ({mb} MB)", { mb: Math.round(status.downloadMb) })}
         </button>
       ) : status?.installed ? (
         <p className="flex items-center gap-2 text-xs text-zinc-400">
-          {status.ready ? "Ready." : "Loading…"}
+          {status.ready ? t("Ready.") : t("Loading…")}
           <button
             onClick={() =>
               void api
@@ -480,7 +512,7 @@ function MeaningSection() {
             }
             className="ml-auto text-zinc-500 underline-offset-2 hover:text-zinc-200 hover:underline"
           >
-            Remove
+            {t("Remove")}
           </button>
         </p>
       ) : null}

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useT } from "../../lib/i18n";
 import { api, type SearchResponse, type Slide } from "../../lib/ipc";
 import { parseTheme } from "../../lib/theme";
 import { SlideView } from "../../output/SlideView";
@@ -16,14 +17,15 @@ export function Monitors() {
   const live = useDashboard((s) => s.live);
   const goLive = useDashboard((s) => s.goLive);
   const draftTheme = useDashboard((s) => s.draftTheme);
+  const t = useT();
   const theme = useMemo(() => parseTheme(live?.theme), [live?.theme]);
   const previewTheme = draftTheme ?? theme;
   const onAir = !!live?.slide && !live.blackout;
   const status = live?.blackout
-    ? "BLACKED OUT"
+    ? t("BLACKED OUT")
     : live?.slide
-      ? "ON SCREEN"
-      : "CLEAR";
+      ? t("ON SCREEN")
+      : t("CLEAR");
 
   return (
     // Capped so the monitors leave room for the transcript and plan on very wide screens.
@@ -32,11 +34,11 @@ export function Monitors() {
       className="mx-auto grid w-full min-w-0 max-w-[calc(149vh+130px)] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3"
     >
       <div className="min-w-0 space-y-2">
-        <MonitorLabel title="Preview">
+        <MonitorLabel title={t("Preview")}>
           <span className="truncate text-xs font-semibold text-zinc-500">
             {preview
               ? `${preview.label} · ${preview.translation}`
-              : "Nothing selected"}
+              : t("Nothing selected")}
           </span>
         </MonitorLabel>
         <DraftBar />
@@ -58,15 +60,15 @@ export function Monitors() {
           disabled={!preview}
           onClick={() => goLive()}
           className="flex h-[84px] w-[84px] flex-col items-center justify-center gap-1 rounded-xl bg-amber-500 text-sm font-extrabold hover:bg-amber-400 disabled:opacity-35"
-          title="Put Preview on screen (Enter)"
+          title={t("Put Preview on screen (Enter)")}
         >
-          Go live
-          <span className="text-[11px] font-semibold opacity-70">⏎ Enter</span>
+          {t("Go live")}
+          <span className="text-[11px] font-semibold opacity-70">{t("⏎ Enter")}</span>
         </button>
       </div>
 
       <div className="min-w-0 space-y-2">
-        <MonitorLabel title="Live">
+        <MonitorLabel title={t("Live")}>
           <span
             className={`mr-auto flex items-center gap-1.5 text-[11px] font-bold tracking-[0.12em] ${onAir ? "text-red-400" : "text-zinc-500"}`}
           >
@@ -78,24 +80,24 @@ export function Monitors() {
             </span>
           </span>
           <span className="flex flex-none gap-1">
-            <Btn onClick={() => api.stepVerse(-1)} title="Previous verse (←)">
-              ◀<span className="hidden min-[1300px]:inline"> Verse</span>
+            <Btn onClick={() => api.stepVerse(-1)} title={t("Previous verse (←)")}>
+              ◀<span className="hidden min-[1300px]:inline"> {t("Verse")}</span>
             </Btn>
-            <Btn onClick={() => api.stepVerse(1)} title="Next verse (→)">
-              <span className="hidden min-[1300px]:inline">Verse </span>▶
+            <Btn onClick={() => api.stepVerse(1)} title={t("Next verse (→)")}>
+              <span className="hidden min-[1300px]:inline">{t("Verse")} </span>▶
             </Btn>
             <Btn
               onClick={() => api.setBlackout(!live?.blackout)}
-              title="Black out the screen (B)"
+              title={t("Black out the screen (B)")}
               danger
             >
-              {live?.blackout ? "Unblack" : "Black"}
+              {live?.blackout ? t("Unblack") : t("Black")}
             </Btn>
             <Btn
               onClick={() => api.clearOutput()}
-              title="Remove the verse from the screen (Esc)"
+              title={t("Remove the verse from the screen (Esc)")}
             >
-              Clear
+              {t("Clear")}
             </Btn>
           </span>
         </MonitorLabel>
@@ -208,6 +210,7 @@ function SearchBox() {
   const [armed, setArmed] = useState<string | null>(null);
   const ready = armed !== null && armed === previewId;
   const [result, setResult] = useState<SearchResponse | null>(null);
+  const t = useT();
 
   useEffect(() => {
     if (!query.trim()) {
@@ -261,18 +264,18 @@ function SearchBox() {
           }
         }}
         onBlur={() => setArmed(null)}
-        aria-label="Search scripture"
+        aria-label={t("Search scripture")}
         placeholder={
           ready
-            ? "Press Enter again to go live"
-            : "Search: “jn 3 16”, “love is patient” or “don't worry about tomorrow”"
+            ? t("Press Enter again to go live")
+            : t("Search: “jn 3 16”, “love is patient” or “don't worry about tomorrow”")
         }
         className={`h-10 w-full rounded-lg bg-white/[.02] px-3.5 text-sm font-medium outline-none ring-1 ring-zinc-800 focus:ring-amber-500 ${ready ? "placeholder:text-amber-300" : "placeholder:text-zinc-500"}`}
       />
       {result && (
         <ul className="absolute inset-x-3 top-full z-10 mt-1 max-h-80 overflow-y-auto rounded-md bg-zinc-900 shadow-xl ring-1 ring-zinc-700">
           {items.length === 0 && byMeaning.length === 0 && (
-            <li className="px-3 py-2 text-sm text-zinc-500">No matches</li>
+            <li className="px-3 py-2 text-sm text-zinc-500">{t("No matches")}</li>
           )}
           {items.map((s, i) => (
             <SearchItem key={s.id + i} slide={s} onPick={pick} />
@@ -281,9 +284,9 @@ function SearchBox() {
             <>
               <li
                 className="border-t border-zinc-800 px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-sky-400"
-                title="Verses that say the same thing in other words"
+                title={t("Verses that say the same thing in other words")}
               >
-                By meaning
+                {t("By meaning")}
               </li>
               {byMeaning.map((s, i) => (
                 <SearchItem key={"m" + s.id + i} slide={s} onPick={pick} />

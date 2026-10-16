@@ -1,6 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { forgetUpload, SAMPLES } from "../../lib/backgrounds";
+import { useT } from "../../lib/i18n";
 import { api, type UploadedBackground } from "../../lib/ipc";
 import { DEFAULT_THEME, FONTS, parseTheme, parseThemeJson, PRESETS, SHADOWS, type Theme } from "../../lib/theme";
 import { useDashboard } from "../store";
@@ -29,6 +30,7 @@ export function StyleDrawer() {
   const setDraft = useDashboard((s) => s.setDraftTheme);
   const theme = draft ?? parseTheme(liveTheme);
   const drawerRef = useDismiss<HTMLElement>(open, () => setOpen(false), ["[data-preview-column]", "[data-style-toggle]"]);
+  const t = useT();
 
   /** Copy, change, validate; the draft is always a well-formed theme. */
   const edit = (change: (t: Theme) => void) => {
@@ -40,15 +42,15 @@ export function StyleDrawer() {
   return (
     <aside
       ref={drawerRef}
-      aria-label="Style"
+      aria-label={t("Style")}
       inert={!open}
       className={`absolute inset-y-0 left-0 z-30 flex w-[clamp(300px,calc(24vw+12px),392px)] flex-col bg-zinc-950 shadow-2xl ring-1 ring-zinc-800 transition-transform duration-200 ease-out motion-reduce:transition-none ${
         open ? "translate-x-0" : "-translate-x-full"
       }`}
     >
       <header className="flex h-10 flex-none items-center justify-between border-b border-zinc-800 px-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-        Style: fonts & background
-        <button onClick={() => setOpen(false)} className="rounded px-1.5 text-base leading-none text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label="Close style">
+        {t("Style: fonts & background")}
+        <button onClick={() => setOpen(false)} className="rounded px-1.5 text-base leading-none text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label={t("Close style")}>
           ×
         </button>
       </header>
@@ -95,10 +97,11 @@ export function DraftBar() {
   const draft = useDashboard((s) => s.draftTheme);
   const setDraft = useDashboard((s) => s.setDraftTheme);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
   if (!draft) return null;
   return (
     <div className="flex flex-none items-center gap-2 bg-amber-950/60 px-3 py-1.5 text-xs text-amber-100">
-      <span className="flex-1">Style changes are shown in Preview only.{error && <span className="ml-1 text-red-300">{error}</span>}</span>
+      <span className="flex-1">{t("Style changes are shown in Preview only.")}{error && <span className="ml-1 text-red-300">{error}</span>}</span>
       <button
         onClick={() =>
           void api
@@ -111,10 +114,10 @@ export function DraftBar() {
         }
         className="rounded bg-amber-600 px-2 py-0.5 font-semibold text-white hover:bg-amber-500"
       >
-        Apply to screen
+        {t("Apply to screen")}
       </button>
       <button onClick={() => setDraft(null)} className="rounded px-2 py-0.5 hover:bg-amber-900">
-        Discard
+        {t("Discard")}
       </button>
     </div>
   );
@@ -123,6 +126,7 @@ export function DraftBar() {
 type Edit = (change: (t: Theme) => void) => void;
 
 function Presets({ current, onPick }: { current: Theme; onPick: (t: Theme) => void }) {
+  const t = useT();
   return (
     <Section title="Start from">
       <div className="flex flex-wrap gap-1.5">
@@ -132,7 +136,7 @@ function Presets({ current, onPick }: { current: Theme; onPick: (t: Theme) => vo
             onClick={() => onPick(p)}
             className={`rounded-full px-2.5 py-1 text-xs ring-1 ${current.name === p.name ? "bg-amber-600 ring-amber-500" : "bg-zinc-900 ring-zinc-700 hover:ring-zinc-500"}`}
           >
-            {p.name}
+            {t(p.name)}
           </button>
         ))}
       </div>
@@ -145,6 +149,7 @@ function BackgroundSection({ theme, edit }: { theme: Theme; edit: Edit }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const t = useT();
   const bg = theme.background;
   const pick = (picture: string) => edit((t) => void (t.background.picture = picture));
 
@@ -171,7 +176,7 @@ function BackgroundSection({ theme, edit }: { theme: Theme; edit: Edit }) {
   };
 
   const remove = async (u: UploadedBackground) => {
-    if (!window.confirm(`Delete “${u.name}” from your backgrounds?`)) return;
+    if (!window.confirm(t("Delete “{name}” from your backgrounds?", { name: u.name }))) return;
     try {
       setUploads(await api.deleteBackground(u.file));
       forgetUpload(u.file);
@@ -184,11 +189,11 @@ function BackgroundSection({ theme, edit }: { theme: Theme; edit: Edit }) {
   return (
     <Section title="Background">
       <div className="grid grid-cols-4 gap-1.5">
-        <Tile selected={!bg.picture} onClick={() => pick("")} label="Colour only">
+        <Tile selected={!bg.picture} onClick={() => pick("")} label={t("Colour only")}>
           <div className="h-full w-full" style={{ background: bg.color }} />
         </Tile>
         {SAMPLES.map((s) => (
-          <Tile key={s.id} selected={bg.picture === `sample:${s.id}`} onClick={() => pick(`sample:${s.id}`)} label={s.name}>
+          <Tile key={s.id} selected={bg.picture === `sample:${s.id}`} onClick={() => pick(`sample:${s.id}`)} label={t(s.name)}>
             <img src={s.url} alt="" className="h-full w-full object-cover" />
           </Tile>
         ))}
@@ -203,7 +208,7 @@ function BackgroundSection({ theme, edit }: { theme: Theme; edit: Edit }) {
           className="flex aspect-video flex-col items-center justify-center rounded border border-dashed border-zinc-600 text-xs text-zinc-400 hover:border-amber-500 hover:text-amber-300 disabled:opacity-50"
         >
           <span className="text-lg leading-none">+</span>
-          {busy ? "Adding…" : "Upload"}
+          {busy ? t("Adding…") : t("Upload")}
         </button>
         <input
           ref={fileRef}
@@ -220,12 +225,12 @@ function BackgroundSection({ theme, edit }: { theme: Theme; edit: Edit }) {
       {error && <p className="text-xs text-red-400">{error}</p>}
       <Row label="Colour">
         <Color value={bg.color} onChange={(v) => edit((t) => void (t.background.color = v))} />
-        <span className="text-xs text-zinc-500">{bg.picture ? "shows at the edges while the picture loads" : ""}</span>
+        <span className="text-xs text-zinc-500">{bg.picture ? t("shows at the edges while the picture loads") : ""}</span>
       </Row>
       {bg.picture && (
         <>
           <Slider label="Darken" value={bg.dim} min={0} max={0.9} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => edit((t) => void (t.background.dim = v))} />
-          <Slider label="Soften" value={bg.blurPx} min={0} max={20} step={1} format={(v) => (v ? `${v}px` : "off")} onChange={(v) => edit((t) => void (t.background.blurPx = v))} />
+          <Slider label="Soften" value={bg.blurPx} min={0} max={20} step={1} format={(v) => (v ? `${v}px` : t("off"))} onChange={(v) => edit((t) => void (t.background.blurPx = v))} />
         </>
       )}
     </Section>
@@ -234,6 +239,7 @@ function BackgroundSection({ theme, edit }: { theme: Theme; edit: Edit }) {
 
 function TextSection({ theme, edit }: { theme: Theme; edit: Edit }) {
   const text = theme.text;
+  const t = useT();
   return (
     <Section title="Verse text">
       <Row label="Font">
@@ -241,7 +247,7 @@ function TextSection({ theme, edit }: { theme: Theme; edit: Edit }) {
         <select value={text.weight} onChange={(e) => edit((t) => void (t.text.weight = Number(e.target.value)))} className="rounded bg-zinc-800 px-2 py-1">
           {WEIGHTS.map(([w, l]) => (
             <option key={w} value={w}>
-              {l}
+              {t(l)}
             </option>
           ))}
         </select>
@@ -286,10 +292,10 @@ function TextSection({ theme, edit }: { theme: Theme; edit: Edit }) {
       </Row>
       <Row label="Shadow">
         <select value={SHADOWS.some((sh) => sh.css === text.shadow) ? text.shadow : "custom"} onChange={(e) => edit((t) => void (t.text.shadow = e.target.value))} className="min-w-0 flex-1 rounded bg-zinc-800 px-2 py-1">
-          {!SHADOWS.some((sh) => sh.css === text.shadow) && <option value="custom">Custom</option>}
+          {!SHADOWS.some((sh) => sh.css === text.shadow) && <option value="custom">{t("Custom")}</option>}
           {SHADOWS.map((sh) => (
             <option key={sh.label} value={sh.css}>
-              {sh.label}
+              {t(sh.label)}
             </option>
           ))}
         </select>
@@ -304,9 +310,9 @@ function TextSection({ theme, edit }: { theme: Theme; edit: Edit }) {
           value={text.outline.width}
           onChange={(e) => edit((t) => void (t.text.outline.width = Number(e.target.value)))}
           className="min-w-0 flex-1 accent-amber-500"
-          aria-label="Outline width"
+          aria-label={t("Outline width")}
         />
-        <span className="w-10 text-right font-mono text-xs text-zinc-400">{text.outline.width ? `${text.outline.width}px` : "Off"}</span>
+        <span className="w-10 text-right font-mono text-xs text-zinc-400">{text.outline.width ? `${text.outline.width}px` : t("off")}</span>
       </Row>
       <div className="flex flex-wrap gap-x-4 gap-y-1.5">
         <Check label="Verse numbers" checked={text.verseNumbers} onChange={(on) => edit((t) => void (t.text.verseNumbers = on))} />
@@ -355,13 +361,14 @@ function AdvancedJson({ theme, onUse }: { theme: Theme; onUse: (t: Theme) => voi
   const [open, setOpen] = useState(false);
   const [json, setJson] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
   useEffect(() => {
     if (open) setJson(JSON.stringify(theme, null, 2));
   }, [open, theme]);
   return (
     <div>
       <button onClick={() => setOpen(!open)} className="text-xs text-zinc-500 hover:text-zinc-300">
-        {open ? "▾" : "▸"} Advanced: edit as JSON (share themes as files)
+        {open ? "▾" : "▸"} {t("Advanced: edit as JSON (share themes as files)")}
       </button>
       {open && (
         <div className="mt-2 space-y-2">
@@ -376,7 +383,7 @@ function AdvancedJson({ theme, onUse }: { theme: Theme; onUse: (t: Theme) => voi
             }}
             className="rounded bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700"
           >
-            Use this JSON
+            {t("Use this JSON")}
           </button>
         </div>
       )}
@@ -387,18 +394,20 @@ function AdvancedJson({ theme, onUse }: { theme: Theme; onUse: (t: Theme) => voi
 // ---------- small controls ----------
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
+  const t = useT();
   return (
     <section className="space-y-2">
-      <h4 className="text-xs font-semibold text-zinc-400">{title}</h4>
+      <h4 className="text-xs font-semibold text-zinc-400">{t(title)}</h4>
       {children}
     </section>
   );
 }
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
+  const t = useT();
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="w-24 flex-none text-xs text-zinc-500">{label}</span>
+      <span className="w-24 flex-none text-xs text-zinc-500">{t(label)}</span>
       {children}
     </div>
   );
@@ -420,20 +429,22 @@ function Color({ value, onChange }: { value: string; onChange: (v: string) => vo
 }
 
 function Check({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  const t = useT();
   return (
     <label className="flex items-center gap-1.5 text-xs text-zinc-300">
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-amber-500" />
-      {label}
+      {t(label)}
     </label>
   );
 }
 
 function Segmented({ value, options, onChange }: { value: string; options: [string, string][]; onChange: (v: string) => void }) {
+  const t = useT();
   return (
     <div className="flex overflow-hidden rounded ring-1 ring-zinc-700">
       {options.map(([v, l]) => (
         <button key={v} onClick={() => onChange(v)} className={`px-2 py-0.5 text-xs ${v === value ? "bg-amber-600 text-white" : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"}`}>
-          {l}
+          {t(l)}
         </button>
       ))}
     </div>
@@ -459,26 +470,27 @@ function useSystemFonts() {
 
 function FontSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const installed = useSystemFonts();
+  const t = useT();
   const known = FONTS.some((f) => f.stack === value) || installed.some((f) => fontStack(f) === value);
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} className="min-w-0 flex-1 rounded bg-zinc-800 px-2 py-1" style={{ fontFamily: value }}>
-      {!known && <option value={value}>Custom font</option>}
-      <optgroup label="Included with Hearken Studio">
+      {!known && <option value={value}>{t("Custom font")}</option>}
+      <optgroup label={t("Included with Hearken Studio")}>
         {FONTS.filter((f) => f.bundled).map((f) => (
           <option key={f.label} value={f.stack}>
-            {f.label}
+            {t(f.label)}
           </option>
         ))}
       </optgroup>
-      <optgroup label="Common">
+      <optgroup label={t("Common")}>
         {FONTS.filter((f) => !f.bundled).map((f) => (
           <option key={f.label} value={f.stack}>
-            {f.label}
+            {t(f.label)}
           </option>
         ))}
       </optgroup>
       {installed.length > 0 && (
-        <optgroup label={`Installed on this computer (${installed.length})`}>
+        <optgroup label={t("Installed on this computer ({n})", { n: installed.length })}>
           {installed.map((f) => (
             <option key={f} value={fontStack(f)}>
               {f}
@@ -491,6 +503,7 @@ function FontSelect({ value, onChange }: { value: string; onChange: (v: string) 
 }
 
 function Tile({ selected, onClick, label, onDelete, children }: { selected: boolean; onClick: () => void; label: string; onDelete?: () => void; children: ReactNode }) {
+  const t = useT();
   return (
     <div className="group relative">
       <button
@@ -504,7 +517,7 @@ function Tile({ selected, onClick, label, onDelete, children }: { selected: bool
       {onDelete && (
         <button
           onClick={onDelete}
-          aria-label={`Delete ${label}`}
+          aria-label={t("Delete {name}", { name: label })}
           className="absolute right-0.5 top-0.5 hidden h-5 w-5 rounded-full bg-black/70 text-xs leading-5 text-zinc-200 hover:bg-red-600 group-hover:block"
         >
           ×

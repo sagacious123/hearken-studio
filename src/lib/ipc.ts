@@ -166,6 +166,30 @@ export interface Settings {
   accuracyModel: string;
   /** Names and words to listen for, comma or line separated. */
   vocabulary: string;
+  /** Languages preached, as codes ("en", "fr", "es"). */
+  languages: string[];
+  /** Language of Hearken's menus and buttons. */
+  uiLanguage: "en" | "fr" | "es";
+  /** The first-run screens have been seen. */
+  onboarded: boolean;
+}
+
+/** A language Hearken can listen for. */
+export interface LanguageOption {
+  code: string;
+  /** In English ("French") and in the language itself ("Français"). */
+  name: string;
+  native: string;
+  /** The Bible shown by default when it's preached. */
+  bible: string;
+}
+
+/** What listening in some languages needs downloaded. */
+export interface LanguageSetup {
+  /** Their default Bibles (bundled English ones aren't listed). */
+  bibles: LibraryItem[];
+  /** The speech model they need on this computer, unless it ships with the app. */
+  speechModel: Omit<ModelStatus, "usable" | "speed"> | null;
 }
 
 export interface ModelStatus {
@@ -245,6 +269,8 @@ export interface LibraryItem {
 export interface BookInfo {
   id: number;
   name: string;
+  /** The name in other languages, by code ("fr": "Jean"). */
+  names: Record<string, string>;
   /** Lowercase names people type: "jn", "1 cor", "psalm". */
   aliases: string[];
   /** Verses per chapter (index 0 = chapter 1). */
@@ -349,6 +375,9 @@ export const api = {
   /** The running session, if listening. */
   pipelineInfo: () => invoke<PipelineInfo | null>("pipeline_info"),
   listTranslations: () => invoke<Translation[]>("list_translations"),
+  listLanguages: () => invoke<LanguageOption[]>("list_languages"),
+  /** What listening in `languages` needs downloaded: their Bibles and the speech model. */
+  languageSetup: (languages: string[]) => invoke<LanguageSetup>("language_setup", { languages }),
   listSystemFonts: () => invoke<string[]>("list_system_fonts"),
   openScreen: (n: number) => invoke<number[]>("open_screen", { n }),
   closeScreen: (n: number) => invoke<number[]>("close_screen", { n }),

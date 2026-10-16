@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useT } from "../../lib/i18n";
 import { ArchivePanel } from "./ArchivePanel";
 import { PlanPanel } from "./PlanPanel";
 import { SongsPanel } from "./SongsPanel";
@@ -18,6 +19,7 @@ function savedTab(): Tab {
 /** The service around the sermon: the plan, songs and past services. */
 export function Sidebar() {
   const [tab, setTab] = useState<Tab>(savedTab);
+  const tr = useT();
   const choose = (t: Tab) => {
     setTab(t);
     try {
@@ -36,7 +38,7 @@ export function Sidebar() {
             onClick={() => choose(t)}
             className={`border-b-2 ${t === tab ? "border-amber-500 font-medium text-zinc-100" : "border-transparent font-medium text-zinc-500 hover:text-zinc-300"}`}
           >
-            {t}
+            {tr(t)}
           </button>
         ))}
       </nav>
