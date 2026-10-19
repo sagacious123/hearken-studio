@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { locale, useT } from "../../lib/i18n";
 import { api, type Computer, type LicenceInfo, type LicenceStatus } from "../../lib/ipc";
 import { useDashboard } from "../store";
+import { CodeBoxes } from "./CodeBoxes";
 
 const date = (unix: number) => new Date(unix * 1000).toLocaleDateString(locale(), { day: "numeric", month: "long", year: "numeric" });
 const DAY = 86_400;
@@ -213,18 +214,12 @@ export function SignInForm({ onDone }: { onDone: () => void }) {
           <p className="font-light leading-relaxed text-zinc-300">{t("We emailed a 6-digit code to {email}. Enter it to finish creating the account. It expires in 30 minutes.", { email })}</p>
         </div>
         <form className="grid gap-2" onSubmit={submit}>
-          <label htmlFor="acct-code" className="font-medium text-zinc-200">
-            {t("Code")}
-          </label>
-          <input
-            id="acct-code"
+          <CodeBoxes
+            label={t("Code")}
             value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            required
-            inputMode="numeric"
-            autoComplete="one-time-code"
+            onChange={setCode}
+            onComplete={(c) => !busy && void run(async () => signedIn(await api.confirmSignUp(email, c)))}
             autoFocus
-            className={`${FIELD} w-40 font-mono text-lg tracking-[0.3em]`}
           />
           <button type="submit" disabled={busy || code.length < 6} className={`${PRIMARY} mt-2`}>
             {busy ? t("One moment…") : t("Create account")}
