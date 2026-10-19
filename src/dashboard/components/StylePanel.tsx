@@ -2,10 +2,12 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { forgetUpload, SAMPLES } from "../../lib/backgrounds";
 import { useT } from "../../lib/i18n";
-import { api, type UploadedBackground } from "../../lib/ipc";
+import { api, type Slide, type UploadedBackground } from "../../lib/ipc";
 import { DEFAULT_THEME, FONTS, parseTheme, parseThemeJson, PRESETS, SHADOWS, type Theme } from "../../lib/theme";
 import { useDashboard } from "../store";
 import { useDismiss } from "../useDismiss";
+import { LivestreamBand } from "../../output/ScreenLooks";
+import { Stage } from "../../output/Stage";
 
 const WEIGHTS: [number, string][] = [
   [300, "Light"],
@@ -85,6 +87,7 @@ export function StyleDrawer() {
             <Slider label="Fade length" value={theme.transition.durationMs} min={100} max={1500} step={50} format={(v) => `${v} ms`} onChange={(v) => edit((t) => void (t.transition.durationMs = v))} />
           )}
         </Section>
+        <LivestreamSection theme={theme} edit={edit} />
         <AdvancedJson theme={theme} onUse={(t) => setDraft(t)} />
       </div>
       <DraftBar />
@@ -353,6 +356,79 @@ function ReferenceSection({ theme, edit }: { theme: Theme; edit: Edit }) {
           </div>
         </>
       )}
+    </Section>
+  );
+}
+
+/** A verse to show in the livestream preview when nothing is in Preview or live. */
+const SAMPLE: Slide = {
+  id: "sample",
+  label: "John 3:16",
+  translation: "KJV",
+  reference: { bookId: 43, chapter: 3, verseStart: 16, verseEnd: 16 },
+  verses: [{ verse: 16, text: "For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life." }],
+};
+
+/**
+ * The band on the livestream: the OBS overlay and the "Lower third" screen follow these, once
+ * applied to screen. The preview shows it over a stand-in for the camera picture.
+ */
+function LivestreamSection({ theme, edit }: { theme: Theme; edit: Edit }) {
+  const t = useT();
+  const ls = theme.livestream;
+  const slide = useDashboard((s) => s.preview ?? s.live?.slide ?? null);
+  const set = (fn: (l: Theme["livestream"]) => void) => edit((th) => fn(th.livestream));
+  return (
+    <Section title="Livestream">
+      <p className="text-xs leading-relaxed text-zinc-500">{t("The band on your livestream: the OBS or vMix overlay (Share → Livestream overlay) and the Lower third screen. Changes reach them when you apply them to the screen.")}</p>
+      <div className="overflow-hidden rounded-lg ring-1 ring-zinc-800" aria-label={t("Livestream preview")}>
+        <div className="aspect-video">
+          <Stage background="linear-gradient(160deg,#3b4a5c 0%,#1d2733 45%,#0d1117 100%)">
+            <div aria-hidden style={{ position: "absolute", inset: 0, background: "radial-gradient(40% 55% at 50% 42%, rgba(255,226,190,.28), transparent 70%)" }} />
+            <LivestreamBand slide={slide && !slide.song ? slide : (slide ?? SAMPLE)} theme={theme} />
+          </Stage>
+        </div>
+      </div>
+      <Row label="Position">
+        <Segmented value={ls.position} options={[["bottom", "Bottom"], ["top", "Top"]]} onChange={(v) => set((l) => void (l.position = v as Theme["livestream"]["position"]))} />
+        <Segmented value={ls.align} options={[["left", "Left"], ["center", "Centre"]]} onChange={(v) => set((l) => void (l.align = v as Theme["livestream"]["align"]))} />
+      </Row>
+      <Slider label="Size" value={ls.size} min={0.6} max={1.6} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set((l) => void (l.size = v))} />
+      <Slider label="Space at the sides" value={ls.insetPct} min={0} max={25} step={0.5} format={(v) => `${v}%`} onChange={(v) => set((l) => void (l.insetPct = v))} />
+      <Slider label="Space from the edge" value={ls.offsetPct} min={0} max={20} step={0.5} format={(v) => `${v}%`} onChange={(v) => set((l) => void (l.offsetPct = v))} />
+      <Row label="Band">
+        <Color value={ls.background} onChange={(v) => set((l) => void (l.background = v))} />
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.02}
+          value={ls.opacity}
+          onChange={(e) => set((l) => void (l.opacity = Number(e.target.value)))}
+          className="min-w-0 flex-1 accent-amber-500"
+          aria-label={t("Band opacity")}
+        />
+        <span className="w-10 text-right font-mono text-xs text-zinc-400">{Math.round(ls.opacity * 100)}%</span>
+      </Row>
+      <Slider label="Corners" value={ls.radius} min={0} max={48} step={1} format={(v) => `${v}px`} onChange={(v) => set((l) => void (l.radius = v))} />
+      <Row label="Accent">
+        <Color value={ls.accent} onChange={(v) => set((l) => void (l.accent = v))} />
+        <Check label="Stripe at the side" checked={ls.stripe} onChange={(on) => set((l) => void (l.stripe = on))} />
+      </Row>
+      <Row label="Text">
+        <Color value={ls.textColor} onChange={(v) => set((l) => void (l.textColor = v))} />
+        <FontSelect value={ls.fontFamily || theme.text.fontFamily} onChange={(v) => set((l) => void (l.fontFamily = v === theme.text.fontFamily ? "" : v))} />
+      </Row>
+      <Row label="Reference">
+        <FontSelect value={ls.referenceFont || theme.reference.fontFamily} onChange={(v) => set((l) => void (l.referenceFont = v === theme.reference.fontFamily ? "" : v))} />
+      </Row>
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+        <Check label="Show the reference" checked={ls.showReference} onChange={(on) => set((l) => void (l.showReference = on))} />
+        <Check label="Show the translation" checked={ls.showTranslation} onChange={(on) => set((l) => void (l.showTranslation = on))} />
+      </div>
+      <button onClick={() => edit((th) => void (th.livestream = structuredClone(DEFAULT_THEME.livestream)))} className="text-xs text-zinc-500 hover:text-zinc-200">
+        {t("Reset the livestream look")}
+      </button>
     </Section>
   );
 }

@@ -10,6 +10,12 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview
 
 use crate::{events, history::History, scripture::Slide};
 
+/// Windows (WebView2): keep drawing screens that are covered by other windows, so a lower third
+/// or stage display captured in OBS never freezes behind the operator's window. Every window
+/// must use the same arguments (tauri.conf.json sets them on the main one), and they keep
+/// wry's defaults. Other systems ignore them.
+const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling";
+
 pub const OUTPUT_LABEL: &str = "output";
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -200,6 +206,7 @@ fn open_window(app: &AppHandle, label: &str, url: &str, title: &str, monitor: Op
             w
         }
         None => WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+            .additional_browser_args(BROWSER_ARGS)
             .title(title)
             .decorations(false)
             .resizable(false)

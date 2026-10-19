@@ -53,6 +53,34 @@ export interface Theme {
     type: "fade" | "none";
     durationMs: number;
   };
+  /**
+   * The lower third for a livestream: the OBS / vMix overlay (served to phones' Wi-Fi) and the
+   * "Lower third" screen both draw it from these, on the 1920×1080 stage.
+   */
+  livestream: {
+    position: "bottom" | "top";
+    /** Space at each side of the band, % of the width. */
+    insetPct: number;
+    /** Space between the band and the bottom (or top) edge, % of the height. */
+    offsetPct: number;
+    /** Overall size: 1 is the standard band. */
+    size: number;
+    align: "left" | "center";
+    background: string;
+    /** 0 (no band, only text) to 1 (solid). */
+    opacity: number;
+    radius: number;
+    /** The reference's colour, and the stripe down the band's side. */
+    accent: string;
+    stripe: boolean;
+    textColor: string;
+    /** "" uses the verse text's font. */
+    fontFamily: string;
+    /** "" uses the reference's font. */
+    referenceFont: string;
+    showReference: boolean;
+    showTranslation: boolean;
+  };
 }
 
 export const DEFAULT_THEME: Theme = {
@@ -83,6 +111,23 @@ export const DEFAULT_THEME: Theme = {
   },
   layout: { paddingPct: 6, verticalAlign: "center", sideBySide: "columns" },
   transition: { type: "fade", durationMs: 350 },
+  livestream: {
+    position: "bottom",
+    insetPct: 5,
+    offsetPct: 6,
+    size: 1,
+    align: "left",
+    background: "#0a0a0e",
+    opacity: 0.82,
+    radius: 16,
+    accent: "#e9b24c",
+    stripe: true,
+    textColor: "#ffffff",
+    fontFamily: "",
+    referenceFont: "",
+    showReference: true,
+    showTranslation: true,
+  },
 };
 
 const ENUMS: Record<string, readonly string[]> = {
@@ -91,6 +136,8 @@ const ENUMS: Record<string, readonly string[]> = {
   "layout.verticalAlign": ["top", "center", "bottom"],
   "layout.sideBySide": ["columns", "rows"],
   "transition.type": ["fade", "none"],
+  "livestream.position": ["bottom", "top"],
+  "livestream.align": ["left", "center"],
 };
 
 const RANGES: Record<string, [number, number]> = {
@@ -104,6 +151,11 @@ const RANGES: Record<string, [number, number]> = {
   "text.outline.width": [0, 12],
   "layout.paddingPct": [0, 25],
   "transition.durationMs": [0, 3000],
+  "livestream.insetPct": [0, 25],
+  "livestream.offsetPct": [0, 20],
+  "livestream.size": [0.6, 1.6],
+  "livestream.opacity": [0, 1],
+  "livestream.radius": [0, 48],
 };
 
 function merge(def: unknown, input: unknown, path: string): unknown {
@@ -209,3 +261,31 @@ export const PRESETS: Theme[] = [
     layout: { verticalAlign: "top" },
   }),
 ];
+
+/**
+ * Where the livestream band sits on the 1920×1080 stage, and its type sizes. The app's
+ * "Lower third" screen and the OBS overlay (share/overlay.html) both follow these numbers.
+ */
+export function lowerThirdBox(ls: Theme["livestream"]) {
+  const size = Math.min(1.6, Math.max(0.6, ls.size));
+  const side = Math.round((1920 * ls.insetPct) / 100);
+  const edge = Math.round((1080 * ls.offsetPct) / 100);
+  return {
+    left: side,
+    right: side,
+    [ls.position]: edge,
+    height: Math.round(300 * size),
+    padding: `${Math.round(24 * size)}px ${Math.round(38 * size)}px ${Math.round(28 * size)}px`,
+    referencePx: Math.round(36 * size),
+    textMinPx: Math.round(24 * size),
+    textMaxPx: Math.round(56 * size),
+  };
+}
+
+/** A #rrggbb colour at `alpha`, for the band's background. */
+export function withAlpha(hex: string, alpha: number) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return `rgba(10,10,14,${alpha})`;
+  const n = parseInt(m[1], 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${Math.min(1, Math.max(0, alpha))})`;
+}

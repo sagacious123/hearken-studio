@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { OutputState, Slide } from "../lib/ipc";
-import type { Theme } from "../lib/theme";
+import { lowerThirdBox, withAlpha, type Theme } from "../lib/theme";
 import { useFitText } from "./useFitText";
 
 /** Lower third background: black or green for a video switcher's key, or the theme colour. */
@@ -14,61 +14,77 @@ const lines = (slide: Slide) => (slide.song ? slide.verses.map((v) => v.text).jo
  */
 export function LowerThird({ state, theme, keyColor }: { state: OutputState | null; theme: Theme; keyColor: string }) {
   const slide = state?.blackout ? null : (state?.slide ?? null);
-  const text = slide ? lines(slide) : "";
-  const fitRef = useFitText<HTMLDivElement>(26, 58, [slide?.id, text]);
   return (
     <div style={{ position: "absolute", inset: 0, background: keyColor }}>
-      {slide && (
+      <LivestreamBand slide={slide} theme={theme} />
+    </div>
+  );
+}
+
+/**
+ * The livestream band itself, as the Style panel sets it (Style → Livestream). Drawn on the
+ * 1920×1080 stage; the OBS overlay (share/overlay.html) draws the same band from the same numbers.
+ */
+export function LivestreamBand({ slide, theme }: { slide: Slide | null; theme: Theme }) {
+  const ls = theme.livestream;
+  const box = lowerThirdBox(ls);
+  const text = slide ? lines(slide) : "";
+  const fitRef = useFitText<HTMLDivElement>(box.textMinPx, box.textMaxPx, [slide?.id, text, box.textMaxPx, ls.fontFamily]);
+  if (!slide) return null;
+  return (
+    <div
+      key={slide.id}
+      className="sb-enter"
+      style={{
+        position: "absolute",
+        left: box.left,
+        right: box.right,
+        top: box.top,
+        bottom: box.bottom,
+        height: box.height,
+        boxSizing: "border-box",
+        padding: box.padding,
+        borderRadius: ls.radius,
+        background: withAlpha(ls.background, ls.opacity),
+        boxShadow: ls.stripe ? `inset ${Math.round(8 * ls.size)}px 0 0 ${ls.accent}` : undefined,
+        display: "flex",
+        flexDirection: "column",
+        gap: Math.round(10 * ls.size),
+        textAlign: ls.align,
+      }}
+    >
+      {ls.showReference && (
         <div
-          key={slide.id}
-          className="sb-enter"
           style={{
-            position: "absolute",
-            left: 96,
-            right: 96,
-            bottom: 64,
-            height: 330,
-            boxSizing: "border-box",
-            padding: "26px 40px 30px",
-            borderRadius: 18,
-            background: "rgba(10,10,14,0.82)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
+            flex: "none",
+            fontFamily: ls.referenceFont || theme.reference.fontFamily,
+            color: ls.accent,
+            fontSize: box.referencePx,
+            fontWeight: 700,
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
           }}
         >
-          <div
-            style={{
-              flex: "none",
-              fontFamily: theme.reference.fontFamily,
-              color: theme.reference.color,
-              fontSize: 38,
-              fontWeight: 700,
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-            }}
-          >
-            {slide.label}
-            {!slide.song && <span style={{ opacity: 0.7, marginLeft: "0.6em" }}>{slide.translation}</span>}
-          </div>
-          <div
-            ref={fitRef}
-            style={{
-              flex: "1 1 auto",
-              minHeight: 0,
-              overflow: "hidden",
-              fontFamily: theme.text.fontFamily,
-              color: "#ffffff",
-              fontWeight: theme.text.weight,
-              lineHeight: 1.3,
-              whiteSpace: slide.song ? "pre-line" : undefined,
-              textWrap: "pretty",
-            }}
-          >
-            {text}
-          </div>
+          {slide.label}
+          {!slide.song && ls.showTranslation && <span style={{ opacity: 0.7, marginLeft: "0.6em" }}>{slide.translation}</span>}
         </div>
       )}
+      <div
+        ref={fitRef}
+        style={{
+          flex: "1 1 auto",
+          minHeight: 0,
+          overflow: "hidden",
+          fontFamily: ls.fontFamily || theme.text.fontFamily,
+          color: ls.textColor,
+          fontWeight: theme.text.weight,
+          lineHeight: 1.3,
+          whiteSpace: slide.song ? "pre-line" : undefined,
+          textWrap: "pretty",
+        }}
+      >
+        {text}
+      </div>
     </div>
   );
 }

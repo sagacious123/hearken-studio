@@ -94,6 +94,24 @@ export const fr: Record<string, string> = {
   Common: "Courantes",
   "Installed on this computer ({n})": "Installées sur cet ordinateur ({n})",
   "System sans-serif": "Sans-serif du système",
+  // Style → Livestream
+  Livestream: "Diffusion en direct",
+  Position: "Position",
+  "Space at the sides": "Marge sur les côtés",
+  "Space from the edge": "Distance du bord",
+  Band: "Bandeau",
+  Corners: "Coins",
+  Accent: "Accent",
+  "Stripe at the side": "Liseré sur le côté",
+  Text: "Texte",
+  Reference: "Référence",
+  "Show the reference": "Afficher la référence",
+  "Show the translation": "Afficher la traduction",
+  "The band on your livestream: the OBS or vMix overlay (Share → Livestream overlay) and the Lower third screen. Changes reach them when you apply them to the screen.":
+    "Le bandeau de votre diffusion en direct : l’incrustation OBS ou vMix (Partager → Incrustation OBS) et l’écran Bandeau. Les changements leur parviennent quand vous les appliquez à l’écran.",
+  "Livestream preview": "Aperçu de la diffusion",
+  "Band opacity": "Opacité du bandeau",
+  "Reset the livestream look": "Rétablir le style de diffusion",
 };
 
 export const es: Record<string, string> = {
@@ -190,4 +208,22 @@ export const es: Record<string, string> = {
   Common: "Comunes",
   "Installed on this computer ({n})": "Instaladas en esta computadora ({n})",
   "System sans-serif": "Sans serif del sistema",
+  // Style → Livestream
+  Livestream: "Transmisión en vivo",
+  Position: "Posición",
+  "Space at the sides": "Margen a los lados",
+  "Space from the edge": "Distancia del borde",
+  Band: "Franja",
+  Corners: "Esquinas",
+  Accent: "Acento",
+  "Stripe at the side": "Línea al costado",
+  Text: "Texto",
+  Reference: "Referencia",
+  "Show the reference": "Mostrar la referencia",
+  "Show the translation": "Mostrar la traducción",
+  "The band on your livestream: the OBS or vMix overlay (Share → Livestream overlay) and the Lower third screen. Changes reach them when you apply them to the screen.":
+    "La franja de tu transmisión en vivo: la superposición de OBS o vMix (Compartir → Superposición OBS) y la pantalla Tercio inferior. Los cambios les llegan cuando los aplicas a la pantalla.",
+  "Livestream preview": "Vista previa de la transmisión",
+  "Band opacity": "Opacidad de la franja",
+  "Reset the livestream look": "Restablecer el estilo de la transmisión",
 };

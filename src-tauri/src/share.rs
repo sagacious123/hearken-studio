@@ -39,6 +39,27 @@ use crate::{
 
 const PHONE_HTML: &str = include_str!("share/phone.html");
 const OVERLAY_HTML: &str = include_str!("share/overlay.html");
+/// The fonts bundled with the app, so the livestream overlay can use the same ones as the Style
+/// panel even on another computer (OBS on a streaming PC).
+const FONTS_CSS: &str = include_str!("../../src/assets/fonts/fonts.css");
+const FONTS: &[(&str, &[u8])] = &[
+    ("EBGaramond-normal-latin-ext.woff2", include_bytes!("../../src/assets/fonts/EBGaramond-normal-latin-ext.woff2")),
+    ("EBGaramond-normal-latin.woff2", include_bytes!("../../src/assets/fonts/EBGaramond-normal-latin.woff2")),
+    ("Inter-normal-latin-ext.woff2", include_bytes!("../../src/assets/fonts/Inter-normal-latin-ext.woff2")),
+    ("Inter-normal-latin.woff2", include_bytes!("../../src/assets/fonts/Inter-normal-latin.woff2")),
+    ("Lora-normal-latin-ext.woff2", include_bytes!("../../src/assets/fonts/Lora-normal-latin-ext.woff2")),
+    ("Lora-normal-latin.woff2", include_bytes!("../../src/assets/fonts/Lora-normal-latin.woff2")),
+    ("Merriweather-normal-latin-ext.woff2", include_bytes!("../../src/assets/fonts/Merriweather-normal-latin-ext.woff2")),
+    ("Merriweather-normal-latin.woff2", include_bytes!("../../src/assets/fonts/Merriweather-normal-latin.woff2")),
+    ("Montserrat-normal-latin-ext.woff2", include_bytes!("../../src/assets/fonts/Montserrat-normal-latin-ext.woff2")),
+    ("Montserrat-normal-latin.woff2", include_bytes!("../../src/assets/fonts/Montserrat-normal-latin.woff2")),
+    ("Nunito-normal-latin-ext.woff2", include_bytes!("../../src/assets/fonts/Nunito-normal-latin-ext.woff2")),
+    ("Nunito-normal-latin.woff2", include_bytes!("../../src/assets/fonts/Nunito-normal-latin.woff2")),
+    ("Oswald-normal-latin-ext.woff2", include_bytes!("../../src/assets/fonts/Oswald-normal-latin-ext.woff2")),
+    ("Oswald-normal-latin.woff2", include_bytes!("../../src/assets/fonts/Oswald-normal-latin.woff2")),
+    ("PlayfairDisplay-normal-latin-ext.woff2", include_bytes!("../../src/assets/fonts/PlayfairDisplay-normal-latin-ext.woff2")),
+    ("PlayfairDisplay-normal-latin.woff2", include_bytes!("../../src/assets/fonts/PlayfairDisplay-normal-latin.woff2")),
+];
 const REMOTE_HTML: &str = include_str!("share/remote.html");
 
 /// Tried first: browsers don't show the default port, so addresses read "http://hearken.local".
@@ -147,7 +168,14 @@ impl Share {
             // Own read-only connection: phones never wait on the operator's.
             let bible = BibleDb::open(&bible_path).ok();
             for req in srv.incoming_requests() {
-                handle(&app, bible.as_ref(), &pin, req);
+                // A recap (a PDF or Word file for a phone) takes a moment to make: it gets its own
+                // thread, so the livestream overlay and phones never wait behind it.
+                if req.url().starts_with("/recap") {
+                    let (app, pin, bible_path) = (app.clone(), pin.clone(), bible_path.clone());
+                    std::thread::spawn(move || handle(&app, BibleDb::open(&bible_path).ok().as_ref(), &pin, req));
+                } else {
+                    handle(&app, bible.as_ref(), &pin, req);
+                }
             }
         })?;
         log::info!("sharing at {} ({})", base_url(&format!("{name}.local"), port), base_url(&ip.to_string(), port));
@@ -333,6 +361,16 @@ fn handle(app: &AppHandle, bible: Option<&BibleDb>, pin: &str, req: Request) {
     match (req.method(), path.as_str()) {
         (Method::Get, "/") => respond(req, 200, html, PHONE_HTML.into()),
         (Method::Get, "/overlay") => respond(req, 200, html, OVERLAY_HTML.into()),
+        (Method::Get, "/fonts/fonts.css") => respond(req, 200, "text/css", FONTS_CSS.into()),
+        (Method::Get, p) if p.starts_with("/fonts/") => match FONTS.iter().find(|(name, _)| p["/fonts/".len()..] == **name) {
+            Some((_, bytes)) => {
+                let resp = tiny_http::Response::from_data(bytes.to_vec())
+                    .with_header(Header::from_bytes("Content-Type", "font/woff2").expect("header"))
+                    .with_header(Header::from_bytes("Cache-Control", "max-age=86400").expect("header"));
+                let _ = req.respond(resp);
+            }
+            None => respond(req, 404, "text/plain", "Not found".into()),
+        },
         (Method::Get, "/remote") => respond(req, 200, html, REMOTE_HTML.into()),
         (Method::Get, "/recap") => match phone_recap(&state, bible, q.get("t").map(String::as_str)) {
             Some((_, doc)) => respond(req, 200, html, recap::phone_page(&doc, &recap_toolbar(q.get("t").map(String::as_str)))),
@@ -375,8 +413,9 @@ fn handle(app: &AppHandle, bible: Option<&BibleDb>, pin: &str, req: Request) {
 /// The live slide for phones and the overlay, optionally re-rendered in another translation.
 fn live_json(state: &AppState, bible: Option<&BibleDb>, translation: Option<&str>) -> serde_json::Value {
     let live = state.presenter.snapshot();
+    let style = livestream_style(live.theme.as_ref());
     let Some(slide) = live.slide.filter(|_| !live.blackout) else {
-        return json!({ "revision": live.revision, "slide": null, "recap": recap_shared(state) });
+        return json!({ "revision": live.revision, "slide": null, "recap": recap_shared(state), "style": style });
     };
     let (code, verses, label) = match (translation, bible) {
         (Some(t), Some(db)) if !slide.is_song() && !t.eq_ignore_ascii_case(&slide.translation) => {
@@ -398,6 +437,7 @@ fn live_json(state: &AppState, bible: Option<&BibleDb>, translation: Option<&str
     json!({
         "revision": live.revision,
         "recap": recap_shared(state),
+        "style": style,
         "slide": {
             "id": slide.id,
             "label": label,
@@ -406,6 +446,18 @@ fn live_json(state: &AppState, bible: Option<&BibleDb>, translation: Option<&str
             "song": slide.is_song(),
             "verses": verses,
         }
+    })
+}
+
+/// The Style panel's Livestream settings, for the overlay, with the verse and reference fonts
+/// they fall back to. The overlay fills in its own defaults for anything missing (older styles).
+fn livestream_style(theme: Option<&serde_json::Value>) -> serde_json::Value {
+    let get = |path: &[&str]| path.iter().try_fold(theme?, |v, k| v.get(*k)).cloned();
+    json!({
+        "livestream": get(&["livestream"]),
+        "textFont": get(&["text", "fontFamily"]),
+        "referenceFont": get(&["reference", "fontFamily"]),
+        "weight": get(&["text", "weight"]),
     })
 }
 
