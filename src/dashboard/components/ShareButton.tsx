@@ -104,6 +104,7 @@ export function ShareButton() {
   return (
     <div ref={rootRef} className="relative">
       <button
+        data-tour="share"
         onClick={() => setOpen(!open)}
         className={`h-9 rounded-lg px-2 text-xs font-bold hover:bg-white/[.06] min-[1300px]:px-3 ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
       >
@@ -114,7 +115,7 @@ export function ShareButton() {
       </button>
       {open && (
         <div className="absolute right-0 top-full z-20 mt-2 max-h-[calc(100dvh-7rem)] w-[22rem] space-y-3 overflow-y-auto overscroll-contain rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
-          <label className="flex items-center justify-between gap-3">
+          <label data-tour="share-toggle" className="flex items-center justify-between gap-3">
             <span>
               <span className="font-semibold">{t("Share on the local network")}</span>
               <span className="block text-xs text-zinc-400">
@@ -161,7 +162,7 @@ export function ShareButton() {
 
           {info?.enabled && (
             <>
-              <div className="flex gap-3">
+              <div data-tour="share-qr" className="flex gap-3">
                 <div
                   className="h-28 w-28 flex-none overflow-hidden rounded bg-white p-1 [&_svg]:h-full [&_svg]:w-full"
                   dangerouslySetInnerHTML={{ __html: info.qrSvg }}

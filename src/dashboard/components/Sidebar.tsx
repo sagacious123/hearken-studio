@@ -30,11 +30,12 @@ export function Sidebar() {
   };
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800 bg-white/[.02]">
-      <nav className="flex h-11 flex-none gap-5 border-b border-zinc-800 px-4 text-sm">
+    <section data-tour="sidebar" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800 bg-white/[.02]">
+      <nav data-tour="tabs" className="flex h-11 flex-none gap-5 border-b border-zinc-800 px-4 text-sm">
         {TABS.map((t) => (
           <button
             key={t}
+            data-tour={`tab-${t.toLowerCase()}`}
             onClick={() => choose(t)}
             className={`border-b-2 ${t === tab ? "border-amber-500 font-medium text-zinc-100" : "border-transparent font-medium text-zinc-500 hover:text-zinc-300"}`}
           >

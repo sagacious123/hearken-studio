@@ -90,3 +90,67 @@ textarea,
 .bg-emerald-600, .bg-emerald-700, .bg-sky-600, .bg-sky-700 {
   color: #1d1200;
 }
+
+/* Guided tours: the night falls around one part of the screen, lit in gold, and the light glides
+   to the next part as the card moves with it. */
+.tour-spot {
+  position: fixed;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 9999px rgba(4, 3, 8, 0.76),
+    0 0 0 2px rgba(233, 178, 76, 0.95),
+    0 0 34px 8px rgba(233, 178, 76, 0.32);
+  transition: top 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), left 0.5s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), height 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.4s;
+  pointer-events: none;
+}
+.tour-spot::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  border: 2px solid rgba(248, 224, 164, 0.7);
+  animation: tour-ring 2.2s ease-out infinite;
+}
+.tour-spot-none { box-shadow: 0 0 0 9999px rgba(4, 3, 8, 0.82); }
+.tour-spot-none::after { display: none; }
+@keyframes tour-ring {
+  0% { opacity: 0.8; transform: scale(1); }
+  70%, 100% { opacity: 0; transform: scale(1.06); }
+}
+.tour-card {
+  position: fixed;
+  padding: 20px 22px 18px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(30, 25, 40, 0.98), rgba(14, 11, 21, 0.98));
+  border: 1px solid rgba(233, 178, 76, 0.28);
+  box-shadow: 0 24px 70px -18px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  transition: top 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), left 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tour-card-in { animation: tour-in 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes tour-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.tour-progress { transition: width 0.5s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.tour-spark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fbe7b5, #e9b24c 60%, transparent 70%);
+  animation: tour-spark 1.1s cubic-bezier(0.15, 0.7, 0.3, 1) both;
+}
+@keyframes tour-spark {
+  from { opacity: 1; transform: rotate(var(--a)) translateX(0) scale(1); }
+  to { opacity: 0; transform: rotate(var(--a)) translateX(calc(var(--d) + 120px)) scale(0.4); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-spot, .tour-card, .tour-progress { transition: none; }
+  .tour-spot::after, .tour-card-in, .tour-spark { animation: none; }
+  .tour-spark { display: none; }
+}
+.tour-card button:focus { outline: none; }
+.tour-card button:focus-visible { outline: 2px solid #f8e0a4; outline-offset: 2px; }

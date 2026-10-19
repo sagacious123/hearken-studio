@@ -56,6 +56,7 @@ export function ScreensButton({ monitors }: { monitors: MonitorInfo[] }) {
   return (
     <div ref={ref} className="relative">
       <button
+        data-tour="screens"
         onClick={() => setOpen(!open)}
         className={`h-9 rounded-lg px-2 text-xs font-bold hover:bg-white/[.06] min-[1300px]:px-3 ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
         title={t("More screens: stage display, livestream lower third")}
@@ -180,6 +181,7 @@ export function ScreensButton({ monitors }: { monitors: MonitorInfo[] }) {
           })}
           {screens.length < MAX_SCREENS && (
             <button
+              data-tour="screens-add"
               onClick={() =>
                 void saveSettings({
                   screens: [

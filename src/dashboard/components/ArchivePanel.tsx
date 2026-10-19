@@ -40,7 +40,7 @@ export function ArchivePanel() {
     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-3">
       <ArchiveSearch />
 
-      <section className="space-y-2">
+      <section data-tour="archive-services" className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">{t("Services")}</h3>
         <ChurchName />
         {notice && <p className={`break-all text-xs ${notice.error ? "text-red-400" : "text-emerald-400"}`}>{notice.text}</p>}
@@ -147,7 +147,7 @@ function ArchiveSearch() {
   };
 
   return (
-    <section className="space-y-2">
+    <section data-tour="archive-search" className="space-y-2">
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
@@ -188,7 +188,7 @@ function InsightsView() {
   if (!data) return null;
 
   return (
-    <section className="space-y-3">
+    <section data-tour="archive-insights" className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">{t("Insights")}</h3>
         <div className="flex items-center gap-1 text-sm">

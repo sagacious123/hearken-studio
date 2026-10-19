@@ -20,7 +20,7 @@ export function DetectionQueue() {
   const t = useT();
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800 bg-white/[.02]">
+    <section data-tour="detections" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800 bg-white/[.02]">
       <PanelHeader title={t("Detections")}>
         <label
           className="flex items-center gap-1.5 font-ui text-xs font-semibold normal-case tracking-normal text-zinc-400"

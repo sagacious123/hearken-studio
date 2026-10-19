@@ -18,11 +18,14 @@ export function useDismiss<T extends HTMLElement>(open: boolean, close: () => vo
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Element | null;
       if (!target || ref.current?.contains(target)) return;
+      // A guided tour showing this panel: its own buttons aren't "outside".
+      if (target.closest("[data-tour-ui]")) return;
       if (keep && target.closest(keep)) return;
       closeRef.current();
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      // During a guided tour, Esc ends the tour rather than closing the panel under it.
+      if (e.key !== "Escape" || document.documentElement.dataset.tour) return;
       e.stopPropagation();
       e.preventDefault();
       closeRef.current();

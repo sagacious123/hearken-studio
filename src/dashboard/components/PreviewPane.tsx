@@ -31,6 +31,7 @@ export function Monitors() {
     // Capped so the monitors leave room for the transcript and plan on very wide screens.
     <div
       data-preview-column
+      data-tour="monitors"
       className="mx-auto grid w-full min-w-0 max-w-[calc(149vh+130px)] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3"
     >
       <div className="min-w-0 space-y-2">
@@ -57,6 +58,7 @@ export function Monitors() {
 
       <div className="flex flex-col items-center gap-1.5 pt-9">
         <button
+          data-tour="golive"
           disabled={!preview}
           onClick={() => goLive()}
           className="flex h-[84px] w-[84px] flex-col items-center justify-center gap-1 rounded-xl bg-amber-500 text-sm font-extrabold hover:bg-amber-400 disabled:opacity-35"
@@ -145,6 +147,7 @@ export function Finder() {
   return (
     <div
       data-preview-column
+      data-tour="finder"
       className="flex min-w-0 flex-wrap items-start gap-2"
     >
       <div className="min-w-[16rem] flex-[1_1_18rem]">

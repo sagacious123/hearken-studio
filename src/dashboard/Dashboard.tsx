@@ -10,6 +10,7 @@ import { LanguagePanel, Welcome } from "./components/Language";
 import { LicencePanel, SignInPanel } from "./components/Licence";
 import { StyleDrawer } from "./components/StylePanel";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { TourHost, ToursDialog } from "./tour/Tour";
 import { useDashboard } from "./store";
 
 export function Dashboard() {
@@ -55,7 +56,7 @@ export function Dashboard() {
             <Monitors />
             <Finder />
             <div className="grid min-h-0 grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] gap-3">
-              <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800 bg-white/[.02]">
+              <section data-tour="transcript" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800 bg-white/[.02]">
                 <PanelHeader title={t("Transcript")}>
                   <SingingBadge />
                 </PanelHeader>
@@ -71,6 +72,8 @@ export function Dashboard() {
         <LanguagePanel />
       </div>
       <Welcome />
+      <ToursDialog />
+      <TourHost />
     </div>
   );
 }

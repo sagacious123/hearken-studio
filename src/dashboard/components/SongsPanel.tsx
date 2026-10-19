@@ -98,7 +98,7 @@ export function SongsPanel() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex-none space-y-2 border-b border-zinc-800 p-3">
-        <div className="flex gap-2">
+        <div data-tour="songs-add" className="flex gap-2">
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -151,6 +151,7 @@ export function SongsPanel() {
               setNotice({ text: String(e), error: true });
             }
           }}
+          data-tour="songs-ccli"
           className="text-xs text-zinc-400 hover:text-zinc-200"
         >
           {t("Export song usage for CCLI (last 90 days)")}

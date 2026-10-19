@@ -6,8 +6,9 @@ import * as licence from "./licence";
 import * as panels from "./panels";
 import * as service from "./service";
 import * as style from "./style";
+import * as tours from "./tours";
 
-const areas = [core, licence, service, panels, style, archive];
+const areas = [core, licence, service, panels, style, archive, tours];
 
 export const fr: Record<string, string> = Object.assign({}, ...areas.map((a) => a.fr));
 export const es: Record<string, string> = Object.assign({}, ...areas.map((a) => a.es));

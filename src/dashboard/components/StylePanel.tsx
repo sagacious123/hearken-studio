@@ -396,7 +396,7 @@ function AdvancedJson({ theme, onUse }: { theme: Theme; onUse: (t: Theme) => voi
 function Section({ title, children }: { title: string; children: ReactNode }) {
   const t = useT();
   return (
-    <section className="space-y-2">
+    <section data-tour={`style-${title.split(" ")[0].toLowerCase()}`} className="space-y-2">
       <h4 className="text-xs font-semibold text-zinc-400">{t(title)}</h4>
       {children}
     </section>

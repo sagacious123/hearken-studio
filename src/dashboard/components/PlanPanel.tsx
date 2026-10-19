@@ -47,6 +47,7 @@ export function PlanPanel() {
           {t("Paste the pastor's notes or verse list. Every reference is lined up below, and gets a confidence boost when it's spoken.")}
         </p>
         <textarea
+          data-tour="plan-notes"
           value={text}
           onChange={(e) => {
             setText(e.target.value);
@@ -63,6 +64,7 @@ export function PlanPanel() {
         <div className="flex items-center gap-2">
           <button
             onClick={save}
+            data-tour="plan-line-up"
             disabled={!dirty}
             className="rounded bg-amber-600 px-3 py-1 text-sm font-medium hover:bg-amber-500 disabled:opacity-40"
           >

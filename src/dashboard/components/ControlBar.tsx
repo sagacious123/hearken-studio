@@ -5,6 +5,7 @@ import { useT } from "../../lib/i18n";
 import { parseTheme } from "../../lib/theme";
 import { useDashboard } from "../store";
 import { useDismiss } from "../useDismiss";
+import { useTour } from "../tour/Tour";
 import { AccuracyButton } from "./AccuracyButton";
 import { BibleLibrary } from "./BibleLibrary";
 import { LanguageChip } from "./Language";
@@ -80,6 +81,7 @@ export function ControlBar() {
       />
 
       <div
+        data-tour="input"
         className={`${box} relative gap-2.5 pl-3 pr-2.5 ${s.running ? "" : "cursor-pointer"}`}
         title={s.running ? t("Stop listening to change the input") : t("Sound input")}
       >
@@ -115,7 +117,7 @@ export function ControlBar() {
         </span>
       </div>
 
-      <div className={`${box} flex-none gap-1.5 pl-3 pr-2.5`}>
+      <div data-tour="translation" className={`${box} flex-none gap-1.5 pl-3 pr-2.5`}>
         <Dropdown
           value={settings.translation}
           onChange={(v) => s.saveSettings({ translation: v })}
@@ -178,6 +180,7 @@ export function ControlBar() {
           onPanel={(p) => setPanel(p)}
         />
         <button
+          data-tour="output"
           onClick={() => api.openOutputWindow(monitor)}
           className="ml-1.5 h-9 whitespace-nowrap rounded-lg bg-amber-500 px-3.5 text-sm font-bold hover:bg-amber-400"
           title={t("Open the projector output on the chosen display (Settings → Output display). Press Esc on it to close it.")}
@@ -335,6 +338,7 @@ function ListenButton({
 
   return (
     <button
+      data-tour="listen"
       disabled={starting}
       onClick={onToggle}
       title={running ? t("Stop listening") : t("Start listening")}
@@ -386,6 +390,7 @@ function SettingsMenu({
       <button
         onClick={() => setOpen(!open)}
         className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold hover:bg-white/[.06] ${open ? "bg-white/[.06] text-zinc-100" : "text-zinc-300"}`}
+        data-tour="settings"
         aria-expanded={open}
         aria-label={t("Settings")}
         title={t("Settings")}
@@ -408,7 +413,7 @@ function SettingsMenu({
       </button>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] space-y-4 overflow-hidden rounded-xl bg-zinc-900 p-4 text-sm shadow-2xl ring-1 ring-zinc-700 backdrop-blur-xl">
-          <div className="grid gap-0.5">
+          <div data-tour="settings-panels" className="grid gap-0.5">
             <MenuItem
               onClick={() => {
                 setOpen(false);
@@ -454,8 +459,17 @@ function SettingsMenu({
             >
               {t("Account and licence")}
             </MenuItem>
+            <MenuItem
+              onClick={() => {
+                setOpen(false);
+                useTour.getState().setListOpen(true);
+              }}
+              hint={t("A short tour of each part of Hearken")}
+            >
+              {t("Guided tours")}
+            </MenuItem>
           </div>
-          <div className="space-y-2.5 border-t border-zinc-800 pt-3">
+          <div data-tour="settings-service" className="space-y-2.5 border-t border-zinc-800 pt-3">
             <h3 className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
               {t("During the service")}
             </h3>
@@ -501,7 +515,7 @@ function SettingsMenu({
               />
             </label>
           </div>
-          <label className="block space-y-1.5">
+          <label data-tour="settings-display" className="block space-y-1.5">
             <span className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
               {t("Output display")}
             </span>
