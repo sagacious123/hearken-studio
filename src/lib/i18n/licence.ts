@@ -34,6 +34,19 @@ export const fr: Record<string, string> = {
   "New to Hearken? Create an account": "Nouveau sur Hearken ? Créer un compte",
   "Already have an account? Sign in": "Vous avez déjà un compte ? Se connecter",
   "Back to sign in": "Retour à la connexion",
+  "Check your email": "Vérifiez votre e-mail",
+  "We emailed a 6-digit code to {email}. Enter it to finish creating the account. It expires in 30 minutes.":
+    "Nous avons envoyé un code à 6 chiffres à {email}. Saisissez-le pour terminer la création du compte. Il expire dans 30 minutes.",
+  Code: "Code",
+  "A new code is on its way. Check your spam folder too.": "Un nouveau code arrive. Vérifiez aussi vos courriers indésirables.",
+  "Send a new code": "Envoyer un nouveau code",
+  "Change the details": "Modifier les informations",
+  "This account is on {n} computers": "Ce compte est utilisé sur {n} ordinateurs",
+  "That’s the most it can use at once. Sign one out and this computer takes its place. A service already listening there isn’t interrupted.":
+    "C’est le maximum en même temps. Déconnectez-en un et cet ordinateur prend sa place. Un culte déjà en écoute n’est pas interrompu.",
+  "Last used {date}": "Utilisé pour la dernière fois le {date}",
+  "You can also sign computers out on your account page at hearken-site.vercel.app/account.":
+    "Vous pouvez aussi déconnecter des ordinateurs sur la page de votre compte : hearken-site.vercel.app/account.",
   "If there’s an account for that email, a link to choose a new password is on its way. Check your spam folder too.":
     "Si un compte existe pour cette adresse e-mail, un lien pour choisir un nouveau mot de passe est en route. Pensez à vérifier vos indésirables.",
 
@@ -112,6 +125,19 @@ export const es: Record<string, string> = {
   "New to Hearken? Create an account": "¿Eres nuevo en Hearken? Crea una cuenta",
   "Already have an account? Sign in": "¿Ya tienes una cuenta? Inicia sesión",
   "Back to sign in": "Volver a iniciar sesión",
+  "Check your email": "Revisa tu correo",
+  "We emailed a 6-digit code to {email}. Enter it to finish creating the account. It expires in 30 minutes.":
+    "Enviamos un código de 6 dígitos a {email}. Escríbelo para terminar de crear la cuenta. Caduca en 30 minutos.",
+  Code: "Código",
+  "A new code is on its way. Check your spam folder too.": "Un nuevo código va en camino. Revisa también la carpeta de spam.",
+  "Send a new code": "Enviar un código nuevo",
+  "Change the details": "Cambiar los datos",
+  "This account is on {n} computers": "Esta cuenta se usa en {n} computadoras",
+  "That’s the most it can use at once. Sign one out and this computer takes its place. A service already listening there isn’t interrupted.":
+    "Es el máximo a la vez. Cierra la sesión en una y esta computadora ocupa su lugar. Un culto que ya está escuchando no se interrumpe.",
+  "Last used {date}": "Usada por última vez el {date}",
+  "You can also sign computers out on your account page at hearken-site.vercel.app/account.":
+    "También puedes cerrar la sesión de computadoras en la página de tu cuenta: hearken-site.vercel.app/account.",
   "If there’s an account for that email, a link to choose a new password is on its way. Check your spam folder too.":
     "Si hay una cuenta con ese correo, te llegará un enlace para elegir una contraseña nueva. Revisa también la carpeta de spam.",
 

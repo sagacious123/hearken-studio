@@ -81,6 +81,7 @@ pub fn run() {
             commands::check_licence_online,
             commands::sign_in,
             commands::sign_up,
+            commands::confirm_sign_up,
             commands::sign_out,
             commands::forgot_password,
             commands::list_translations,

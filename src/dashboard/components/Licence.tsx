@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { locale, useT } from "../../lib/i18n";
-import { api, type LicenceInfo, type LicenceStatus } from "../../lib/ipc";
+import { api, type Computer, type LicenceInfo, type LicenceStatus } from "../../lib/ipc";
 import { useDashboard } from "../store";
 
 const date = (unix: number) => new Date(unix * 1000).toLocaleDateString(locale(), { day: "numeric", month: "long", year: "numeric" });
@@ -107,37 +107,147 @@ export function SignInPanel() {
  *  last of the first-run screens. */
 export function SignInForm({ onDone }: { onDone: () => void }) {
   const t = useT();
-  const [mode, setMode] = useState<"signIn" | "create" | "forgot">("signIn");
+  const [mode, setMode] = useState<"signIn" | "create" | "verify" | "forgot">("signIn");
   const [church, setChurch] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  /** The emailed code that confirms a new account's address. */
+  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  /** The account's computers, when it's on its most and one must be signed out first. */
+  const [full, setFull] = useState<{ limit: number; computers: Computer[] } | null>(null);
 
   const go = (m: typeof mode) => {
     setMode(m);
     setMessage(null);
+    setFull(null);
   };
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const signedIn = (licence: LicenceInfo) => {
+    useDashboard.setState({ licence });
+    onDone();
+  };
+
+  const signIn = async (replace: string | null) => {
+    const r = await api.signIn(email, password, replace);
+    if (r.state === "signedIn") signedIn(r.info);
+    else setFull({ limit: r.limit, computers: r.computers });
+  };
+
+  const run = async (work: () => Promise<void>) => {
     setBusy(true);
     setMessage(null);
     try {
-      if (mode === "forgot") {
-        await api.forgotPassword(email);
-        setMessage({ ok: true, text: t("If there’s an account for that email, a link to choose a new password is on its way. Check your spam folder too.") });
-      } else {
-        const licence = mode === "create" ? await api.signUp(church, email, password) : await api.signIn(email, password);
-        useDashboard.setState({ licence });
-        onDone();
-      }
+      await work();
     } catch (err) {
       setMessage({ ok: false, text: String(err) });
     } finally {
       setBusy(false);
     }
   };
+
+  /** Sends the details; the website emails a code to confirm the address. */
+  const createAccount = async () => {
+    const r = await api.signUp(church, email, password);
+    if (r.state === "signedIn") return signedIn(r.info);
+    setEmail(r.email);
+    setCode("");
+    setMode("verify");
+  };
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void run(async () => {
+      if (mode === "forgot") {
+        await api.forgotPassword(email);
+        setMessage({ ok: true, text: t("If there’s an account for that email, a link to choose a new password is on its way. Check your spam folder too.") });
+      } else if (mode === "create") {
+        await createAccount();
+      } else if (mode === "verify") {
+        signedIn(await api.confirmSignUp(email, code));
+      } else {
+        await signIn(null);
+      }
+    });
+  };
+
+  if (full) {
+    return (
+      <>
+        <div className="grid gap-1.5">
+          <p className="font-scripture text-2xl text-zinc-50">{t("This account is on {n} computers", { n: full.limit })}</p>
+          <p className="font-light leading-relaxed text-zinc-300">
+            {t("That’s the most it can use at once. Sign one out and this computer takes its place. A service already listening there isn’t interrupted.")}
+          </p>
+        </div>
+        <ul className="grid gap-2">
+          {full.computers.map((c) => (
+            <li key={c.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-black/20 px-3 py-2.5">
+              <span className="grid min-w-0">
+                <span className="truncate font-medium text-zinc-100">{c.name}</span>
+                <span className="text-xs font-light text-zinc-500">{t("Last used {date}", { date: date(c.last) })}</span>
+              </span>
+              <button disabled={busy} onClick={() => void run(() => signIn(c.id))} className="flex-none rounded-lg border border-zinc-700 px-3 py-1.5 font-semibold text-zinc-100 hover:border-amber-500 disabled:opacity-40">
+                {t("Sign out")}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <Message message={message} />
+        <div className="grid gap-1.5 border-t border-zinc-800 pt-4">
+          <p className="text-xs font-light text-zinc-500">{t("You can also sign computers out on your account page at hearken-site.vercel.app/account.")}</p>
+          <button onClick={() => go("signIn")} className={LINK}>
+            {t("Back to sign in")}
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  if (mode === "verify") {
+    return (
+      <>
+        <div className="grid gap-1.5">
+          <p className="font-scripture text-2xl text-zinc-50">{t("Check your email")}</p>
+          <p className="font-light leading-relaxed text-zinc-300">{t("We emailed a 6-digit code to {email}. Enter it to finish creating the account. It expires in 30 minutes.", { email })}</p>
+        </div>
+        <form className="grid gap-2" onSubmit={submit}>
+          <label htmlFor="acct-code" className="font-medium text-zinc-200">
+            {t("Code")}
+          </label>
+          <input
+            id="acct-code"
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            required
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            autoFocus
+            className={`${FIELD} w-40 font-mono text-lg tracking-[0.3em]`}
+          />
+          <button type="submit" disabled={busy || code.length < 6} className={`${PRIMARY} mt-2`}>
+            {busy ? t("One moment…") : t("Create account")}
+          </button>
+        </form>
+        <Message message={message} />
+        <div className="grid gap-1.5 border-t border-zinc-800 pt-4">
+          <button
+            onClick={() => void run(async () => {
+              await createAccount();
+              setMessage({ ok: true, text: t("A new code is on its way. Check your spam folder too.") });
+            })}
+            className={LINK}
+          >
+            {t("Send a new code")}
+          </button>
+          <button onClick={() => go("create")} className={LINK}>
+            {t("Change the details")}
+          </button>
+        </div>
+      </>
+    );
+  }
 
   const title = { signIn: t("Sign in"), create: t("Create your account"), forgot: t("Reset your password") }[mode];
   return (

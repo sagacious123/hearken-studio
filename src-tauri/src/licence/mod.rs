@@ -87,6 +87,34 @@ pub enum Account {
     Expired { email: String },
 }
 
+/// One of the account's computers, as the website lists them.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Computer {
+    pub id: String,
+    pub name: String,
+    pub last: i64,
+}
+
+/// What signing in came to: signed in, or the account is on its most computers and one of them
+/// must be signed out first (sign in again with its id as `replace`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum SignIn {
+    SignedIn { info: Info },
+    #[serde(rename_all = "camelCase")]
+    TooManyComputers { limit: u32, computers: Vec<Computer>, message: String },
+}
+
+/// What creating the account came to: a code was emailed to confirm the address (then
+/// `confirm_sign_up`), or, from a website that doesn't confirm emails, signed in straight away.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum SignUp {
+    Verify { email: String },
+    SignedIn { info: Info },
+}
+
 /// Everything the dashboard shows about the account, trial and licence.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -237,13 +265,34 @@ impl Licensing {
         }
     }
 
-    pub fn sign_in(&self, email: &str, password: &str) -> Result<Info, String> {
-        let reply = post("auth/login", json!({ "email": email, "password": password, "machine": self.machine })).map_err(|f| f.message)?;
-        self.accept(reply)
+    /// Signs this computer in. `replace` signs out another of the account's computers to make
+    /// room, after the website said the account is on its most computers.
+    pub fn sign_in(&self, email: &str, password: &str, replace: Option<&str>) -> Result<SignIn, String> {
+        let body = json!({ "email": email, "password": password, "machine": self.machine, "name": computer_name(), "replace": replace });
+        match post("auth/login", body) {
+            Ok(reply) => self.accept(reply).map(|info| SignIn::SignedIn { info }),
+            Err(Failure { status: Some(409), message, body }) if body["code"] == "computer_limit" => Ok(SignIn::TooManyComputers {
+                limit: body["limit"].as_u64().unwrap_or(3) as u32,
+                computers: serde_json::from_value(body["computers"].clone()).unwrap_or_default(),
+                message,
+            }),
+            Err(f) => Err(f.message),
+        }
     }
 
-    pub fn sign_up(&self, church: &str, email: &str, password: &str) -> Result<Info, String> {
-        let reply = post("auth/signup", json!({ "church": church, "email": email, "password": password, "machine": self.machine })).map_err(|f| f.message)?;
+    /// Starts creating the church's account: the website emails a code to the address.
+    pub fn sign_up(&self, church: &str, email: &str, password: &str) -> Result<SignUp, String> {
+        let body = json!({ "church": church, "email": email, "password": password, "verify": true, "machine": self.machine, "name": computer_name() });
+        let reply = post("auth/signup", body).map_err(|f| f.message)?;
+        if reply["verify"] == true {
+            return Ok(SignUp::Verify { email: reply["email"].as_str().unwrap_or(email).to_owned() });
+        }
+        self.accept(reply).map(|info| SignUp::SignedIn { info })
+    }
+
+    /// Finishes creating the account with the emailed code, and signs this computer in.
+    pub fn confirm_sign_up(&self, email: &str, code: &str) -> Result<Info, String> {
+        let reply = post("auth/signup", json!({ "email": email, "code": code, "machine": self.machine, "name": computer_name() })).map_err(|f| f.message)?;
         self.accept(reply)
     }
 
@@ -279,9 +328,9 @@ impl Licensing {
     /// ended (password reset, signed out elsewhere) signs this computer out.
     pub fn renew(&self) -> Result<Info, String> {
         let Some(session) = self.record.lock().session.clone() else { return Ok(self.info()) };
-        match post("auth/refresh", json!({ "session": session, "machine": self.machine })) {
+        match post("auth/refresh", json!({ "session": session, "machine": self.machine, "name": computer_name() })) {
             Ok(reply) => self.accept(reply),
-            Err(Failure { status: Some(401), message }) => {
+            Err(Failure { status: Some(401), message, .. }) => {
                 let mut r = self.record.lock();
                 r.session = None;
                 r.account_pass = None;
@@ -371,6 +420,8 @@ fn server() -> String {
 struct Failure {
     status: Option<u16>,
     message: String,
+    /// The website's whole answer, for errors that carry more than a message.
+    body: Value,
 }
 
 fn post(path: &str, body: Value) -> Result<Value, Failure> {
@@ -379,19 +430,25 @@ fn post(path: &str, body: Value) -> Result<Value, Failure> {
 
 /// The JSON answer, or the website's own explanation of what went wrong.
 fn call(response: Result<ureq::Response, ureq::Error>) -> Result<Value, Failure> {
-    let unreadable = || Failure { status: None, message: "The website's answer couldn't be read.".into() };
+    let unreadable = || Failure { status: None, message: "The website's answer couldn't be read.".into(), body: Value::Null };
     match response {
         Ok(r) => serde_json::from_str(&r.into_string().map_err(|_| unreadable())?).map_err(|_| unreadable()),
         Err(ureq::Error::Status(code, r)) => {
-            let said = r.into_string().ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["error"].as_str().map(str::to_owned));
-            Err(Failure { status: Some(code), message: said.unwrap_or_else(|| format!("The Hearken website answered {code}. Try again later.")) })
+            let body = r.into_string().ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).unwrap_or(Value::Null);
+            let message = body["error"].as_str().map(str::to_owned).unwrap_or_else(|| format!("The Hearken website answered {code}. Try again later."));
+            Err(Failure { status: Some(code), message, body })
         }
-        Err(ureq::Error::Transport(_)) => Err(Failure { status: None, message: "Couldn't reach the internet. Connect and try again.".into() }),
+        Err(ureq::Error::Transport(_)) => Err(Failure { status: None, message: "Couldn't reach the internet. Connect and try again.".into(), body: Value::Null }),
     }
 }
 
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new().timeout(Duration::from_secs(15)).build()
+}
+
+/// What the account page calls this computer: its network name, such as "Media-Desk-MacBook".
+fn computer_name() -> String {
+    sysinfo::System::host_name().unwrap_or_default().trim_end_matches(".local").chars().take(60).collect()
 }
 
 /// Unpredictable enough for a nonce or an install ID.
@@ -538,14 +595,17 @@ mod tests {
         assert_eq!(l.info().blocked().map(|b| b.0), Some("SIGNIN"));
 
         let email = format!("e2e-{}@example.com", random_hex(4));
-        let info = l.sign_up("Test Church", &email, "a good password").unwrap();
+        let SignUp::Verify { email: to } = l.sign_up("Test Church", &email, "a good password").unwrap() else { panic!("expected a code") };
+        assert_eq!(to, email);
+        assert!(l.confirm_sign_up(&email, "000000x").is_err(), "a wrong code");
+        let info = l.confirm_sign_up(&email, &emailed_code(&email)).unwrap();
         assert!(info.can_listen, "{info:?}");
         assert!(matches!(&info.account, Account::SignedIn { church, .. } if church == "Test Church"));
         assert!(l.sign_up("Test Church", &email, "a good password").unwrap_err().contains("already"));
 
         assert_eq!(l.sign_out().account, Account::SignedOut);
-        assert!(l.sign_in(&email, "not the password").unwrap_err().contains("Wrong email or password"));
-        assert!(l.sign_in(&email.to_uppercase(), "a good password").unwrap().can_listen);
+        assert!(l.sign_in(&email, "not the password", None).unwrap_err().contains("Wrong email or password"));
+        assert!(matches!(l.sign_in(&email.to_uppercase(), "a good password", None).unwrap(), SignIn::SignedIn { info } if info.can_listen));
         assert!(matches!(l.renew().unwrap().account, Account::SignedIn { .. }));
 
         // Online, the trial is registered too.
@@ -556,6 +616,35 @@ mod tests {
         post("auth/logout", json!({ "session": session })).ok();
         assert!(l.renew().is_err());
         assert_eq!(l.info().account, Account::SignedOut);
+    }
+
+    /// The code the local API would have emailed (it keeps the last email to each address).
+    fn emailed_code(to: &str) -> String {
+        let mail: Value = serde_json::from_str(&agent().get(&format!("{}/dev/mail?to={to}", server())).call().unwrap().into_string().unwrap()).unwrap();
+        mail["data"]["code"].as_str().expect("a code was emailed").to_owned()
+    }
+
+    /// Against the local API too: a fourth computer is refused, and can sign one of the others out.
+    #[test]
+    #[ignore = "needs the site's local API and HEARKEN_API"]
+    fn a_fourth_computer_signs_one_out() {
+        assert!(std::env::var("HEARKEN_API").is_ok(), "set HEARKEN_API");
+        let computer = |n: u32| Licensing::for_tests(&std::env::temp_dir().join(format!("sb-limit-{}-{n}", random_hex(4))));
+        let email = format!("e2e-{}@example.com", random_hex(4));
+        let first = computer(1);
+        first.sign_up("Test Church", &email, "a good password").unwrap();
+        first.confirm_sign_up(&email, &emailed_code(&email)).unwrap();
+        for n in 2..=3 {
+            assert!(matches!(computer(n).sign_in(&email, "a good password", None).unwrap(), SignIn::SignedIn { .. }));
+        }
+        let fourth = computer(4);
+        let SignIn::TooManyComputers { limit, computers, .. } = fourth.sign_in(&email, "a good password", None).unwrap() else { panic!("expected the limit") };
+        assert_eq!((limit, computers.len()), (3, 3));
+        let oldest = computers.iter().min_by_key(|c| c.last).unwrap().id.clone();
+        assert!(matches!(fourth.sign_in(&email, "a good password", Some(&oldest)).unwrap(), SignIn::SignedIn { .. }));
+        // The computer signed out finds out at its next renewal.
+        assert!(first.renew().is_err());
+        assert_eq!(first.info().account, Account::SignedOut);
     }
 
     /// The real website: its signed clock reads back in the app and settles the date.

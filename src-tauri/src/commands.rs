@@ -233,13 +233,19 @@ pub async fn check_licence_online(app: AppHandle) -> CmdResult<LicenceInfo> {
 }
 
 #[tauri::command]
-pub async fn sign_in(email: String, password: String, app: AppHandle) -> CmdResult<LicenceInfo> {
-    tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().licence.sign_in(&email, &password)).await.map_err(err)?
+pub async fn sign_in(email: String, password: String, replace: Option<String>, app: AppHandle) -> CmdResult<crate::licence::SignIn> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().licence.sign_in(&email, &password, replace.as_deref())).await.map_err(err)?
 }
 
 #[tauri::command]
-pub async fn sign_up(church: String, email: String, password: String, app: AppHandle) -> CmdResult<LicenceInfo> {
+pub async fn sign_up(church: String, email: String, password: String, app: AppHandle) -> CmdResult<crate::licence::SignUp> {
     tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().licence.sign_up(&church, &email, &password)).await.map_err(err)?
+}
+
+/// Finishes creating the account with the code emailed to it.
+#[tauri::command]
+pub async fn confirm_sign_up(email: String, code: String, app: AppHandle) -> CmdResult<LicenceInfo> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().licence.confirm_sign_up(&email, &code)).await.map_err(err)?
 }
 
 #[tauri::command]

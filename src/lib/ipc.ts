@@ -64,6 +64,22 @@ export type AccountState =
   | { state: "signedOut" }
   | { state: "expired"; email: string };
 
+/** One of the church account's computers, as the website lists them. */
+export interface Computer {
+  id: string;
+  name: string;
+  /** Unix seconds. */
+  last: number;
+}
+
+/** Signed in, or the account is on its most computers and one must be signed out first. */
+export type SignIn =
+  | { state: "signedIn"; info: LicenceInfo }
+  | { state: "tooManyComputers"; limit: number; computers: Computer[]; message: string };
+
+/** Creating the account: a code was emailed to confirm the address, or (an older website) signed in. */
+export type SignUp = { state: "verify"; email: string } | { state: "signedIn"; info: LicenceInfo };
+
 /** Sign-in, trial and licence together: listening needs a signed-in account and a trial or licence. */
 export interface LicenceInfo {
   status: LicenceStatus;
@@ -368,8 +384,11 @@ export const api = {
   activateLicence: (key: string) => invoke<LicenceInfo>("activate_licence", { key }),
   /** Registers the trial, renews the sign-in and checks the clock against the website's. */
   checkLicenceOnline: () => invoke<LicenceInfo>("check_licence_online"),
-  signIn: (email: string, password: string) => invoke<LicenceInfo>("sign_in", { email, password }),
-  signUp: (church: string, email: string, password: string) => invoke<LicenceInfo>("sign_up", { church, email, password }),
+  /** `replace` signs out one of the account's other computers to make room for this one. */
+  signIn: (email: string, password: string, replace: string | null = null) => invoke<SignIn>("sign_in", { email, password, replace }),
+  /** Starts creating the account: a code is emailed to confirm the address. */
+  signUp: (church: string, email: string, password: string) => invoke<SignUp>("sign_up", { church, email, password }),
+  confirmSignUp: (email: string, code: string) => invoke<LicenceInfo>("confirm_sign_up", { email, code }),
   signOut: () => invoke<LicenceInfo>("sign_out"),
   forgotPassword: (email: string) => invoke<void>("forgot_password", { email }),
   /** The running session, if listening. */
