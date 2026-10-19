@@ -187,8 +187,13 @@ export function ShareButton() {
               <PhoneRecap />
               <Link
                 label={t("Livestream overlay")}
+                url={info.overlayHereUrl}
+                hint={t("For OBS or vMix on this computer: add a Browser source, 1920×1080. Style it in Style → Livestream.")}
+              />
+              <Link
+                label={t("Streaming PC")}
                 url={info.overlayUrl}
-                hint={t("OBS/vMix: add a Browser source, 1920×1080. Add ?pos=top to move it up.")}
+                hint={t("The overlay for OBS or vMix on another computer on the same network.")}
               />
               <Link
                 label={t("Remote")}

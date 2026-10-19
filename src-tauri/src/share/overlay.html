@@ -118,7 +118,9 @@
 
   // Ask the app for the live verse about three times a second. Each request gives up after
   // 2.5 s, and the next starts only when it's done, so a stalled connection can't pile up
-  // and freeze the overlay. Unreachable for 30 s: reload, in case the address moved.
+  // and freeze the overlay. When the address stops answering (on Windows a ".local" name can
+  // stop resolving mid-service), try this computer and then the app's IP address, and keep
+  // going round them. Never reload: a page that can't load leaves OBS on an error page.
   // AbortSignal.timeout isn't in every OBS's built-in browser.
   const timeout = (ms) => {
     if (AbortSignal.timeout) return AbortSignal.timeout(ms);
@@ -126,18 +128,19 @@
     setTimeout(() => c.abort(), ms);
     return c.signal;
   };
-  let failingSince = 0;
+  const port = location.port ? ":" + location.port : "";
+  const ip = "__HEARKEN_IP__"; // filled in by the app
+  const bases = [...new Set(["", `http://127.0.0.1${port}`, /^\d+(\.\d+){3}$/.test(ip) ? `http://${ip}${port}` : ""])];
+  let base = 0;
   async function poll() {
     try {
-      const res = await fetch(`/api/state?_=${Date.now()}`, { cache: "no-store", signal: timeout(2500) });
+      const res = await fetch(`${bases[base]}/api/state?_=${Date.now()}`, { cache: "no-store", signal: timeout(2500) });
       const s = await res.json();
-      failingSince = 0;
       const style = styleFrom(s.style);
       const key = JSON.stringify([s.slide, style]);
       if (key !== shown) { shown = key; render(s.slide, style); }
     } catch {
-      failingSince = failingSince || Date.now();
-      if (Date.now() - failingSince > 30000) location.reload();
+      base = (base + 1) % bases.length;
     }
     setTimeout(poll, 300);
   }

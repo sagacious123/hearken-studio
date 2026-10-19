@@ -93,6 +93,9 @@ pub struct ShareInfo {
     /// Friendly addresses: http://hearken.local, …/overlay, …/remote.
     pub phone_url: String,
     pub overlay_url: String,
+    /// The overlay by 127.0.0.1, for OBS on this computer: no name to look up, and it
+    /// keeps working when the network changes.
+    pub overlay_here_url: String,
     pub remote_url: String,
     /// The same pages by IP address, for devices that can't resolve ".local" names.
     pub ip_url: String,
@@ -216,6 +219,7 @@ impl Share {
             port,
             qr_svg: qr_svg(&format!("{ip_url}/")),
             overlay_url: format!("{friendly}/overlay"),
+            overlay_here_url: format!("{}/overlay", base_url("127.0.0.1", port)),
             remote_url: format!("{friendly}/remote"),
             phone_url: friendly,
             ip_url,
@@ -360,7 +364,8 @@ fn handle(app: &AppHandle, bible: Option<&BibleDb>, pin: &str, req: Request) {
     let js = "application/json";
     match (req.method(), path.as_str()) {
         (Method::Get, "/") => respond(req, 200, html, PHONE_HTML.into()),
-        (Method::Get, "/overlay") => respond(req, 200, html, OVERLAY_HTML.into()),
+        // The page learns the IP address too, to fall back on if the ".local" name stops resolving.
+        (Method::Get, "/overlay") => respond(req, 200, html, OVERLAY_HTML.replace("__HEARKEN_IP__", &local_ipv4().to_string())),
         (Method::Get, "/fonts/fonts.css") => respond(req, 200, "text/css", FONTS_CSS.into()),
         (Method::Get, p) if p.starts_with("/fonts/") => match FONTS.iter().find(|(name, _)| p["/fonts/".len()..] == **name) {
             Some((_, bytes)) => {
@@ -390,7 +395,21 @@ fn handle(app: &AppHandle, bible: Option<&BibleDb>, pin: &str, req: Request) {
         }
         (Method::Get, "/api/state") => {
             let body = live_json(&state, bible, q.get("t").map(String::as_str));
-            respond(req, 200, js, body.to_string())
+            // Readable from the overlay's fallback addresses (another origin) too.
+            let resp = Response::from_string(body.to_string())
+                .with_header(Header::from_bytes("Content-Type", js).expect("header"))
+                .with_header(Header::from_bytes("Cache-Control", "no-store").expect("header"))
+                .with_header(Header::from_bytes("Access-Control-Allow-Origin", "*").expect("header"))
+                .with_header(Header::from_bytes("Access-Control-Allow-Private-Network", "true").expect("header"));
+            let _ = req.respond(resp);
+        }
+        // Chromium asks first before a page on the network reads 127.0.0.1 (Private Network Access).
+        (Method::Options, "/api/state") => {
+            let resp = Response::empty(204)
+                .with_header(Header::from_bytes("Access-Control-Allow-Origin", "*").expect("header"))
+                .with_header(Header::from_bytes("Access-Control-Allow-Methods", "GET").expect("header"))
+                .with_header(Header::from_bytes("Access-Control-Allow-Private-Network", "true").expect("header"));
+            let _ = req.respond(resp);
         }
         (Method::Get, "/api/translations") => {
             let list: Vec<_> = bible.map(|b| b.translations().iter().map(|t| json!({ "code": t.code, "name": t.name })).collect()).unwrap_or_default();

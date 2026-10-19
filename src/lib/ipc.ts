@@ -320,6 +320,8 @@ export interface ShareInfo {
   /** Friendly addresses (http://hearken.local …). */
   phoneUrl: string;
   overlayUrl: string;
+  /** The overlay by 127.0.0.1, for OBS on this computer. */
+  overlayHereUrl: string;
   remoteUrl: string;
   /** Same pages by IP address, for devices that can't open ".local" names. */
   ipUrl: string;

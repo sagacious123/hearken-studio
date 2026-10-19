@@ -156,8 +156,11 @@ export const fr: Record<string, string> = {
   "Show QR on screen": "Afficher le QR code à l’écran",
   Phones: "Téléphones",
   "Livestream overlay": "Incrustation OBS",
-  "OBS/vMix: add a Browser source, 1920×1080. Add ?pos=top to move it up.":
-    "OBS/vMix : ajoutez une source Navigateur, en 1920×1080. Ajoutez ?pos=top pour la placer en haut.",
+  "For OBS or vMix on this computer: add a Browser source, 1920×1080. Style it in Style → Livestream.":
+    "Pour OBS ou vMix sur cet ordinateur : ajoutez une source Navigateur, en 1920×1080. Réglez son style dans Style → Diffusion en direct.",
+  "Streaming PC": "PC de diffusion",
+  "The overlay for OBS or vMix on another computer on the same network.":
+    "L’incrustation pour OBS ou vMix sur un autre ordinateur du même réseau.",
   Remote: "Télécommande",
   "Open on your phone and enter PIN {pin}.": "Ouvrez ce lien sur votre téléphone et saisissez le code PIN {pin}.",
   "Some Android phones can't open {local} addresses. They can use {address} instead; the QR code always works.":
@@ -323,8 +326,11 @@ export const es: Record<string, string> = {
   "Show QR on screen": "Mostrar el QR en pantalla",
   Phones: "Teléfonos",
   "Livestream overlay": "Superposición OBS",
-  "OBS/vMix: add a Browser source, 1920×1080. Add ?pos=top to move it up.":
-    "OBS/vMix: agrega una fuente Navegador, de 1920×1080. Agrega ?pos=top para subirla.",
+  "For OBS or vMix on this computer: add a Browser source, 1920×1080. Style it in Style → Livestream.":
+    "Para OBS o vMix en esta computadora: agrega una fuente Navegador, de 1920×1080. Ajusta su estilo en Estilo → Transmisión en vivo.",
+  "Streaming PC": "PC de transmisión",
+  "The overlay for OBS or vMix on another computer on the same network.":
+    "La superposición para OBS o vMix en otra computadora de la misma red.",
   Remote: "Control remoto",
   "Open on your phone and enter PIN {pin}.": "Ábrelo en tu teléfono e ingresa el PIN {pin}.",
   "Some Android phones can't open {local} addresses. They can use {address} instead; the QR code always works.":
