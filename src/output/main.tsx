@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createRoot } from "react-dom/client";
+import { blockContextMenu } from "../lib/contextMenu";
 import { api, events, type OutputState } from "../lib/ipc";
 import { parseTheme } from "../lib/theme";
 import { KEY_COLORS, LowerThird, StageDisplay } from "./ScreenLooks";
@@ -67,6 +68,8 @@ function OutputApp() {
     </Stage>
   );
 }
+
+blockContextMenu();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

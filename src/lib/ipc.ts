@@ -374,6 +374,8 @@ export interface Insights {
 
 export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
+  /** The website's changelog at `version`, in the browser. */
+  openChangelog: (version: string) => invoke<void>("open_changelog", { version }),
   updateSettings: (settings: Settings) => invoke<Settings>("update_settings", { settings }),
   getHardwareProfile: () => invoke<HardwareProfile | null>("get_hardware_profile"),
   runHardwareBenchmark: () => invoke<HardwareProfile>("run_hardware_benchmark"),

@@ -110,6 +110,7 @@ export const fr: Record<string, string> = {
 
   // Updates
   "Version {version} is available.": "La version {version} est disponible.",
+  "What’s new": "Nouveautés",
   "Stop listening before updating": "Arrêtez l’écoute avant de mettre à jour",
   "Downloading…": "Téléchargement…",
   "Installing {n}%": "Installation {n} %",
@@ -225,6 +226,7 @@ export const es: Record<string, string> = {
 
   // Updates
   "Version {version} is available.": "La versión {version} está disponible.",
+  "What’s new": "Novedades",
   "Stop listening before updating": "Detén la escucha antes de actualizar",
   "Downloading…": "Descargando…",
   "Installing {n}%": "Instalando {n}%",

@@ -987,8 +987,10 @@ fn export_dir(app: &AppHandle) -> CmdResult<PathBuf> {
     Ok(dir)
 }
 
-/// Open a file with the system's default app (browser for .html, spreadsheet for .csv).
-fn open_path(path: &Path) {
+/// Open a file (or a web address) with the system's default app: the browser for .html and
+/// links, a spreadsheet for .csv.
+fn open_path(path: impl AsRef<std::ffi::OsStr>) {
+    let path = path.as_ref();
     #[cfg(target_os = "macos")]
     let r = std::process::Command::new("open").arg(path).spawn();
     #[cfg(target_os = "windows")]
@@ -996,8 +998,19 @@ fn open_path(path: &Path) {
     #[cfg(all(unix, not(target_os = "macos")))]
     let r = std::process::Command::new("xdg-open").arg(path).spawn();
     if let Err(e) = r {
-        log::warn!("couldn't open {}: {e}", path.display());
+        log::warn!("couldn't open {}: {e}", path.to_string_lossy());
     }
+}
+
+/// What's new in a version: its entry on the website's changelog, in the browser. Only that page
+/// can be opened this way, and only for a version number.
+#[tauri::command]
+pub fn open_changelog(version: String) -> CmdResult<()> {
+    if version.is_empty() || version.len() > 20 || !version.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') {
+        return Err("not a version".into());
+    }
+    open_path(format!("https://hearken-site.vercel.app/changelog#v{version}"));
+    Ok(())
 }
 
 #[cfg(test)]

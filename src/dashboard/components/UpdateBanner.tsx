@@ -1,6 +1,7 @@
 import type { Update } from "@tauri-apps/plugin-updater";
 import { useEffect, useState } from "react";
 import { useT } from "../../lib/i18n";
+import { api } from "../../lib/ipc";
 import { checkForUpdate, installUpdate } from "../../lib/updater";
 import { useDashboard } from "../store";
 
@@ -31,6 +32,9 @@ export function UpdateBanner() {
         <b>{update.version}</b>
         {after}
       </span>
+      <button onClick={() => void api.openChangelog(update.version)} className="font-medium text-sky-200 underline underline-offset-2 hover:text-white">
+        {t("What’s new")}
+      </button>
       {error && <span className="text-red-300">{error}</span>}
       <button
         disabled={running || installing}
