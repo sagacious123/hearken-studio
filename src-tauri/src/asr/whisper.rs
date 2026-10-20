@@ -98,6 +98,12 @@ pub struct Transcript {
     stray: bool,
 }
 
+impl Transcript {
+    pub fn new(text: String, confidence: f32, language: Option<Lang>) -> Self {
+        Self { text, confidence, language, stray: false }
+    }
+}
+
 pub struct WhisperEngine {
     _ctx: WhisperContext,
     state: WhisperState,

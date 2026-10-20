@@ -20,7 +20,7 @@ use crate::{
         hardware::{self, HardwareProfile},
         models::{self, ModelStatus},
         priority,
-        whisper::{WhisperEngine, GPU_BACKEND},
+        whisper::GPU_BACKEND,
     },
     audio::capture::{self, DeviceInfo},
     events,
@@ -277,8 +277,9 @@ pub async fn stop_pipeline(state: State<'_, AppState>) -> CmdResult<()> {
 
 /// Which model (if any) re-transcribes finished sentences, with its saved speed test.
 /// "auto": the most accurate installed model proven to keep up here; failing that, an
-/// untested one (it's timed on first use: GPU machines try Turbo first, CPU-only Small).
-/// Sermons in other languages use the multilingual Small in place of the English one.
+/// untested one (it's timed on first use). Parakeet comes first: it catches references as well
+/// as the Whisper models, runs fast on any CPU and hears accents clearly. Then GPU machines try
+/// Turbo and CPU-only ones Small. Sermons in other languages use the multilingual models.
 fn choose_accuracy_model(
     choice: &str,
     use_gpu: bool,
@@ -286,15 +287,15 @@ fn choose_accuracy_model(
     profile: &AccuracyProfile,
     langs: &[Lang],
 ) -> Option<(&'static str, PathBuf, Option<Calibration>, bool)> {
-    let backend = if use_gpu { GPU_BACKEND } else { "cpu" };
     let installed = |id: &'static str| models::find(dirs, id).map(|p| (id, p));
-    let cal = |id: &str| profile.get(id, backend).cloned();
+    let cal = |id: &str| profile.get(id, backend_for(id, use_gpu)).cloned();
     let small = models::for_languages("small.en", langs);
+    let parakeet = models::for_languages("parakeet.en", langs);
     match choice {
         "off" => None,
         "auto" => {
-            let best_known = ["large-v3-turbo", small].into_iter().filter(|id| cal(id).is_some_and(|c| c.usable)).find_map(installed);
-            let untested = if use_gpu { ["large-v3-turbo", small] } else { [small, "large-v3-turbo"] };
+            let best_known = [parakeet, "large-v3-turbo", small].into_iter().filter(|id| cal(id).is_some_and(|c| c.usable)).find_map(installed);
+            let untested = if use_gpu { [parakeet, "large-v3-turbo", small] } else { [parakeet, small, "large-v3-turbo"] };
             let first_untested = || untested.into_iter().filter(|id| cal(id).is_none()).find_map(installed);
             best_known.or_else(first_untested).map(|(id, p)| (id, p, cal(id), false))
         }
@@ -302,6 +303,15 @@ fn choose_accuracy_model(
             let id = models::for_languages(other, langs);
             models::CATALOG.iter().find(|m| m.id == id && m.accuracy).and_then(|m| installed(m.id)).map(|(id, p)| (id, p, cal(id), true))
         }
+    }
+}
+
+/// Where `id` runs, as its speed test is filed: Parakeet always on the CPU.
+fn backend_for(id: &str, use_gpu: bool) -> &'static str {
+    match models::info(id) {
+        Some(m) if m.engine == models::Engine::Parakeet => "cpu",
+        _ if use_gpu => GPU_BACKEND,
+        _ => "cpu",
     }
 }
 
@@ -316,9 +326,9 @@ fn calibrate_now(state: &AppState, id: &str, use_gpu: bool, live_threads: usize)
     let langs = state.settings.lock().langs();
     let cal = std::thread::spawn(move || {
         priority::background();
-        let mut engine = WhisperEngine::load_with_fallback(&path, use_gpu, threads).map_err(|e| format!("{e:#}"))?;
+        let mut engine = crate::asr::engine::load(&path, use_gpu, threads).map_err(|e| format!("{e:#}"))?;
         let prompt = crate::asr::whisper::accurate_prompt("", &[], &langs);
-        accuracy::calibrate(&mut engine, &model, &audio, &prompt).map_err(|e| format!("{e:#}"))
+        accuracy::calibrate(engine.as_mut(), &model, &audio, &prompt).map_err(|e| format!("{e:#}"))
     })
     .join()
     .map_err(|_| "speed test crashed".to_string())??;
@@ -349,12 +359,11 @@ fn model_views(state: &AppState) -> Vec<ModelView> {
         let s = state.settings.lock();
         s.gpu_override.or(state.hardware.lock().as_ref().map(|p| p.use_gpu)).unwrap_or(false)
     };
-    let backend = if use_gpu { GPU_BACKEND } else { "cpu" };
     let profile = AccuracyProfile::load(&state.paths.accuracy_profile(), env!("CARGO_PKG_VERSION"));
     models::statuses(&[dirs[0].as_path(), dirs[1].as_path()])
         .into_iter()
         .map(|status| {
-            let cal = profile.get(status.id, backend).filter(|_| status.installed);
+            let cal = profile.get(status.id, backend_for(status.id, use_gpu)).filter(|_| status.installed);
             ModelView { usable: cal.map(|c| c.usable), speed: cal.map(|c| if c.usable { c.describe() } else { "too slow on this computer".into() }), status }
         })
         .collect()
@@ -1096,6 +1105,26 @@ mod tests {
         std::fs::write(dir.join("ggml-small-q5_1.bin"), b"x").unwrap();
         assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &empty, &fr)), Some("small"));
         assert_eq!(id(choose_accuracy_model("small.en", false, &dirs, &empty, &fr)), Some("small"));
+
+        // Parakeet, once its whole folder is there, comes first on every computer; its speed
+        // test is filed under the CPU even where Whisper uses the GPU.
+        let folder = dir.join("parakeet-tdt-0.6b-v2-int8");
+        std::fs::create_dir_all(&folder).unwrap();
+        for f in crate::asr::parakeet::FILES.iter().skip(1) {
+            std::fs::write(folder.join(f), b"x").unwrap();
+        }
+        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &empty, &EN)), Some("small.en")); // incomplete
+        std::fs::write(folder.join(crate::asr::parakeet::FILES[0]), b"x").unwrap();
+        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &empty, &EN)), Some("parakeet.en"));
+        assert_eq!(id(choose_accuracy_model("auto", true, &dirs, &empty, &EN)), Some("parakeet.en"));
+        p.entries = vec![cal("parakeet.en", "cpu", true), cal("large-v3-turbo", GPU_BACKEND, true)];
+        let chosen = choose_accuracy_model("auto", true, &dirs, &p, &EN).unwrap();
+        assert_eq!((chosen.0, chosen.2.is_some()), ("parakeet.en", true));
+        p.entries = vec![cal("parakeet.en", "cpu", false), cal("large-v3-turbo", GPU_BACKEND, true)];
+        assert_eq!(id(choose_accuracy_model("auto", true, &dirs, &p, &EN)), Some("large-v3-turbo"));
+        // French needs the 25-language Parakeet, not the English one.
+        assert_eq!(id(choose_accuracy_model("auto", false, &dirs, &empty, &fr)), Some("small"));
+        assert!(choose_accuracy_model("parakeet.en", false, &dirs, &empty, &fr).is_none());
         std::fs::remove_dir_all(&dir).ok();
     }
 

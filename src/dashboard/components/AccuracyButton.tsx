@@ -87,19 +87,25 @@ export function AccuracyButton({
     models.some((m) => m.id === id && m.installed);
   const known = (id: string) => models.find((m) => m.id === id)?.usable;
   const gpu = settings.gpuOverride ?? profile?.useGpu ?? false;
-  // Sermons in other languages need the multilingual Small; English ones the English Small.
+  // Sermons in other languages need the multilingual models; English ones the English models
+  // where there are both (Small, Parakeet).
   const multilingual = settings.languages.some((c) => c !== "en");
   const small = multilingual ? "small" : "small.en";
-  const forLanguages = (m: ModelStatus) => m.accuracy && m.id !== (multilingual ? "small.en" : "small");
+  const parakeet = multilingual ? "parakeet" : "parakeet.en";
+  const forLanguages = (m: ModelStatus) =>
+    m.accuracy &&
+    (multilingual
+      ? !m.id.endsWith(".en")
+      : !models.some((o) => o.id === `${m.id}.en`));
   // Mirrors the Rust choice: the most accurate model proven to keep up here, else an untested
-  // one (timed on first use; GPU machines try Turbo first, CPU-only Small).
+  // one (timed on first use; Parakeet first, then GPU machines try Turbo, CPU-only Small).
   const autoPick =
-    ["large-v3-turbo", small].find(
+    [parakeet, "large-v3-turbo", small].find(
       (id) => installed(id) && known(id) === true,
     ) ??
     (gpu
-      ? ["large-v3-turbo", small]
-      : [small, "large-v3-turbo"]
+      ? [parakeet, "large-v3-turbo", small]
+      : [parakeet, small, "large-v3-turbo"]
     ).find((id) => installed(id) && known(id) == null);
   const effective =
     choice === "off"

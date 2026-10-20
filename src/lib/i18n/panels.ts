@@ -82,6 +82,12 @@ export const fr: Record<string, string> = {
     "Small pour les prédications dans d’autres langues. Assez rapide sur tout ordinateur récent.",
   "Most accurate, best with accents. Needs Apple Silicon or a graphics card.":
     "Le plus précis, le meilleur avec les accents. Nécessite une puce Apple Silicon ou une carte graphique.",
+  "Parakeet (English)": "Parakeet (anglais)",
+  "Parakeet (25 languages)": "Parakeet (25 langues)",
+  "As accurate as Turbo on sermons, and fast on any computer: no graphics card needed. By NVIDIA (CC BY 4.0).":
+    "Aussi précis que Turbo sur les prédications, et rapide sur tout ordinateur : aucune carte graphique nécessaire. Par NVIDIA (CC BY 4.0).",
+  "Parakeet for sermons in French, Spanish and other European languages. Fast on any computer. By NVIDIA (CC BY 4.0).":
+    "Parakeet pour les prédications en français, en espagnol et dans d’autres langues européennes. Rapide sur tout ordinateur. Par NVIDIA (CC BY 4.0).",
   "too slow on this computer": "trop lent sur cet ordinateur",
   "{quality}, {seconds} s per 10 s of speech": "{quality}, {seconds} s pour 10 s de parole",
   "highest quality": "qualité maximale",
@@ -251,6 +257,12 @@ export const es: Record<string, string> = {
     "Small para sermones en otros idiomas. Bastante rápido en cualquier computadora reciente.",
   "Most accurate, best with accents. Needs Apple Silicon or a graphics card.":
     "El más preciso, el mejor con acentos. Requiere Apple Silicon o una tarjeta gráfica.",
+  "Parakeet (English)": "Parakeet (inglés)",
+  "Parakeet (25 languages)": "Parakeet (25 idiomas)",
+  "As accurate as Turbo on sermons, and fast on any computer: no graphics card needed. By NVIDIA (CC BY 4.0).":
+    "Tan preciso como Turbo en sermones, y rápido en cualquier computadora: no necesita tarjeta gráfica. De NVIDIA (CC BY 4.0).",
+  "Parakeet for sermons in French, Spanish and other European languages. Fast on any computer. By NVIDIA (CC BY 4.0).":
+    "Parakeet para sermones en francés, español y otros idiomas europeos. Rápido en cualquier computadora. De NVIDIA (CC BY 4.0).",
   "too slow on this computer": "demasiado lento en esta computadora",
   "{quality}, {seconds} s per 10 s of speech": "{quality}, {seconds} s por cada 10 s de voz",
   "highest quality": "máxima calidad",
