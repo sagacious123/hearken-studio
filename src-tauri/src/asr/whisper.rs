@@ -23,7 +23,9 @@ fn vocabulary(words: &str) -> String {
     let terms: Vec<&str> = words.split([',', '\n', ';']).map(str::trim).filter(|t| !t.is_empty()).collect();
     let mut out = terms.join(", ");
     if out.len() > MAX_VOCAB_CHARS {
-        out.truncate(out[..MAX_VOCAB_CHARS].rfind(", ").unwrap_or(MAX_VOCAB_CHARS));
+        // Names are often accented ("Adéyẹmí"): cut on a character boundary, never inside one.
+        let limit = floor_char_boundary(&out, MAX_VOCAB_CHARS);
+        out.truncate(out[..limit].rfind(", ").unwrap_or(limit));
     }
     out
 }
@@ -52,11 +54,21 @@ pub fn accurate_prompt(vocab: &str, planned: &[String], langs: &[Lang]) -> Strin
     let mut prompt = parts.join(" ");
     if prompt.len() > MAX_PROMPT_CHARS {
         // Drop from the front: the end (readings, vocabulary) matters most.
-        let cut = prompt.len() - MAX_PROMPT_CHARS;
+        let cut = ceil_char_boundary(&prompt, prompt.len() - MAX_PROMPT_CHARS);
         let start = prompt[cut..].find(' ').map_or(cut, |i| cut + i + 1);
         prompt = prompt[start..].to_owned();
     }
     prompt
+}
+
+/// The nearest character boundary at or before / after byte `i` (book names and vocabulary
+/// are accented: "Genèse", "Ésaïe", "Adéyẹmí").
+fn floor_char_boundary(s: &str, i: usize) -> usize {
+    (0..=i.min(s.len())).rev().find(|&b| s.is_char_boundary(b)).unwrap_or(0)
+}
+
+fn ceil_char_boundary(s: &str, i: usize) -> usize {
+    (i.min(s.len())..=s.len()).find(|&b| s.is_char_boundary(b)).unwrap_or(s.len())
 }
 
 /// Resolve a model id (`tiny.en`, `base.en`, …) to a file in `models_dir`.
@@ -297,6 +309,13 @@ mod tests {
         assert!(live_prompt("", &[Lang::En, Lang::Fr]).contains("Romains 8:28"));
         let long = "word, ".repeat(200);
         assert!(vocabulary(&long).len() <= MAX_VOCAB_CHARS);
+        // Accented names and book names never get cut inside a character.
+        for pad in 0..4 {
+            let names = format!("{}{}", "x".repeat(pad), ", Adéyẹmí Ọlágúnjú".repeat(40));
+            assert!(vocabulary(&names).len() <= MAX_VOCAB_CHARS);
+            let vocab = format!("{}{}", "é".repeat(pad), " Ésaïe Genèse".repeat(30));
+            assert!(accurate_prompt(&vocab, &["Ésaïe 40:31".into()], &[Lang::Fr, Lang::Es]).len() <= MAX_PROMPT_CHARS + 4);
+        }
     }
 
     /// Transcribe 16 kHz mono WAVs in some languages and show what the detector makes of them:

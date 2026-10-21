@@ -616,7 +616,11 @@ impl AsrWorker {
                 let keep = job.is_final
                     || (Some(i) == newest_partial && newest_final.map_or(true, |f| job.utterance > f));
                 if keep {
-                    self.process(engine, job);
+                    let utterance = job.utterance;
+                    // A sentence that trips a bug must not end listening mid-service.
+                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.process(engine, job))).is_err() {
+                        log::error!("utterance {utterance} couldn't be processed (the panic is logged above); listening continues");
+                    }
                 }
             }
         }
@@ -923,66 +927,74 @@ struct RefineWorker {
 impl RefineWorker {
     fn run(&mut self, engine: &mut dyn SpeechEngine, jobs: Receiver<RefineJob>) {
         while let Ok(job) = jobs.recv() {
-            let app = self.app.clone();
-            let state = app.state::<AppState>();
-            let settings = state.settings.lock().clone();
-            let planned: Vec<String> = state.plan.lock().refs.iter().map(|r| r.label()).collect();
-            let prompt = whisper::accurate_prompt(&settings.vocabulary, &planned, &self.langs);
-
-            // Fallen behind: let this sentence keep its quick text rather than grow a backlog.
-            let waited = job.captured_at.elapsed();
-            let sung = self.room.sung(heard_from(&job.audio, job.captured_at), job.captured_at);
-            if waited > REFINE_MAX_WAIT {
-                log::info!("accuracy pass behind ({:.1} s); utterance {} keeps the quick text", waited.as_secs_f32(), job.utterance);
-                if let Some(text) = job.quick_text.get() {
-                    state.history.said(text, sung);
-                }
-                continue;
+            let utterance = job.utterance;
+            // As in the live pass: one sentence that trips a bug mustn't end the accuracy pass.
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.refine(engine, job))).is_err() {
+                log::error!("accuracy pass couldn't process utterance {utterance} (the panic is logged above); it continues");
             }
-
-            let t0 = Instant::now();
-            let transcript = match engine.transcribe(&job.audio, self.opts, &prompt) {
-                Ok(t) => t,
-                Err(e) => {
-                    log::warn!("accuracy pass failed: {e:#}");
-                    continue;
-                }
-            };
-            let inference_ms = t0.elapsed().as_secs_f32() * 1000.0;
-            log::debug!("accuracy pass: {:.0} ms for {:.1} s", inference_ms, job.audio.len() as f32 / SAMPLE_RATE as f32);
-            let _ = app.emit(
-                events::TRANSCRIPT,
-                TranscriptEvent {
-                    utterance_id: job.utterance,
-                    text: transcript.text.clone(),
-                    is_final: true,
-                    confidence: transcript.confidence,
-                    inference_ms,
-                    audio_ms: (job.audio.len() * 1000 / SAMPLE_RATE) as u32,
-                    refined: true,
-                    sung,
-                },
-            );
-            if transcript.text.is_empty() {
-                continue;
-            }
-            state.history.said(&transcript.text, sung);
-            let late = job.captured_at.elapsed();
-            if late > REFINE_MAX_LATE {
-                log::info!("accuracy pass took {:.1} s for utterance {}; its references are too late to queue", late.as_secs_f32(), job.utterance);
-                continue;
-            }
-            let asr_factor = 0.7 + 0.3 * transcript.confidence.clamp(0.0, 1.0);
-            let meaning = settings.meaning_detection.then(|| state.meaning.lock().clone()).flatten();
-            let heard = Heard { text: &transcript.text, is_final: true, languages: &self.langs, language: transcript.language, asr_factor };
-            let refs = find_references(&mut self.parser, &self.bible, &self.v11n, heard, settings.quote_detection, meaning.as_deref());
-            let library = state.songs.version();
-            if self.lyrics.version() != library {
-                self.lyrics.refresh(library, state.songs.all());
-            }
-            let singing = sung || (state.presenter.snapshot().slide.as_ref().is_some_and(|s| s.is_song()) && self.lyrics.detect(&transcript.text).is_some());
-            emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, singing, job.utterance, job.captured_at);
         }
+    }
+
+    fn refine(&mut self, engine: &mut dyn SpeechEngine, job: RefineJob) {
+        let app = self.app.clone();
+        let state = app.state::<AppState>();
+        let settings = state.settings.lock().clone();
+        let planned: Vec<String> = state.plan.lock().refs.iter().map(|r| r.label()).collect();
+        let prompt = whisper::accurate_prompt(&settings.vocabulary, &planned, &self.langs);
+
+        // Fallen behind: let this sentence keep its quick text rather than grow a backlog.
+        let waited = job.captured_at.elapsed();
+        let sung = self.room.sung(heard_from(&job.audio, job.captured_at), job.captured_at);
+        if waited > REFINE_MAX_WAIT {
+            log::info!("accuracy pass behind ({:.1} s); utterance {} keeps the quick text", waited.as_secs_f32(), job.utterance);
+            if let Some(text) = job.quick_text.get() {
+                state.history.said(text, sung);
+            }
+            return;
+        }
+
+        let t0 = Instant::now();
+        let transcript = match engine.transcribe(&job.audio, self.opts, &prompt) {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("accuracy pass failed: {e:#}");
+                return;
+            }
+        };
+        let inference_ms = t0.elapsed().as_secs_f32() * 1000.0;
+        log::debug!("accuracy pass: {:.0} ms for {:.1} s", inference_ms, job.audio.len() as f32 / SAMPLE_RATE as f32);
+        let _ = app.emit(
+            events::TRANSCRIPT,
+            TranscriptEvent {
+                utterance_id: job.utterance,
+                text: transcript.text.clone(),
+                is_final: true,
+                confidence: transcript.confidence,
+                inference_ms,
+                audio_ms: (job.audio.len() * 1000 / SAMPLE_RATE) as u32,
+                refined: true,
+                sung,
+            },
+        );
+        if transcript.text.is_empty() {
+            return;
+        }
+        state.history.said(&transcript.text, sung);
+        let late = job.captured_at.elapsed();
+        if late > REFINE_MAX_LATE {
+            log::info!("accuracy pass took {:.1} s for utterance {}; its references are too late to queue", late.as_secs_f32(), job.utterance);
+            return;
+        }
+        let asr_factor = 0.7 + 0.3 * transcript.confidence.clamp(0.0, 1.0);
+        let meaning = settings.meaning_detection.then(|| state.meaning.lock().clone()).flatten();
+        let heard = Heard { text: &transcript.text, is_final: true, languages: &self.langs, language: transcript.language, asr_factor };
+        let refs = find_references(&mut self.parser, &self.bible, &self.v11n, heard, settings.quote_detection, meaning.as_deref());
+        let library = state.songs.version();
+        if self.lyrics.version() != library {
+            self.lyrics.refresh(library, state.songs.all());
+        }
+        let singing = sung || (state.presenter.snapshot().slide.as_ref().is_some_and(|s| s.is_song()) && self.lyrics.detect(&transcript.text).is_some());
+        emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, singing, job.utterance, job.captured_at);
     }
 }
 
