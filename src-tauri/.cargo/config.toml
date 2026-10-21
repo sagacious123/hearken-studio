@@ -1,0 +1,15 @@
+# Windows: build everything against the static C runtime (/MT). The prebuilt sherpa-onnx and
+# ONNX Runtime libraries (Parakeet) are /MT, and C++ objects built against different runtimes
+# won't link. cc and cmake follow this flag, so whisper.cpp, SQLite and WebRTC VAD build /MT
+# too. It also means church PCs don't need the Visual C++ Redistributable installed.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# whisper-rs-sys hands CMAKE_* variables to whisper.cpp's CMake, whose debug-mode build type
+# (RelWithDebInfo) would otherwise keep CMake's default /MD. Ignored outside MSVC.
+[env]
+CMAKE_POLICY_DEFAULT_CMP0091 = "NEW"
+CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"

@@ -38,7 +38,8 @@ use crate::{
         accuracy::{self, AccuracyProfile, Calibration},
         hardware::{self, PARTIAL_WINDOW_MS},
         priority,
-        whisper::{self, DecodeOptions, WhisperEngine},
+        engine::{self, SpeechEngine},
+        whisper::{self, DecodeOptions},
     },
     audio::{
         capture::{self, CaptureHandle},
@@ -273,7 +274,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
             let name = rc.model_name.clone();
             let handle = thread::Builder::new().name("asr-refine".into()).spawn(move || {
                 priority::background();
-                let engine = WhisperEngine::load_with_fallback(&rc.model_path, rc.use_gpu, rc.threads).map(|mut e| {
+                let engine = engine::load(&rc.model_path, rc.use_gpu, rc.threads).map(|mut e| {
                     e.set_languages(&langs);
                     e
                 });
@@ -291,7 +292,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
                     None => {
                         // First use on this computer: time it on a full sentence and remember.
                         let prompt = whisper::accurate_prompt("", &[], &langs);
-                        match hardware::load_wav(&rc.bench_wav).and_then(|a| accuracy::calibrate(&mut engine, &rc.model_name, &a, &prompt)) {
+                        match hardware::load_wav(&rc.bench_wav).and_then(|a| accuracy::calibrate(engine.as_mut(), &rc.model_name, &a, &prompt)) {
                             Ok(c) => {
                                 AccuracyProfile::record(&rc.calibration_file, &rc.app_version, c.clone());
                                 c
@@ -312,7 +313,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
                 }
                 log::info!("accuracy pass ready: {} on {} ({})", rc.model_name, engine.backend(), cal.describe());
                 let parser = ReferenceParser::for_languages(&langs);
-                RefineWorker { app, bible, v11n, parser, dedupe, opts: cal.options(), lyrics: LyricsIndex::default(), room, langs }.run(&mut engine, rx);
+                RefineWorker { app, bible, v11n, parser, dedupe, opts: cal.options(), lyrics: LyricsIndex::default(), room, langs }.run(engine.as_mut(), rx);
                 log::info!("accuracy pass stopped");
             })?;
             (Some(tx), Some(handle), Some(name))
@@ -332,7 +333,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
         let langs = cfg.languages.clone();
         thread::Builder::new().name("asr".into()).spawn(move || {
             priority::interactive();
-            let engine = WhisperEngine::load_with_fallback(&model_path, use_gpu, threads).map(|mut e| {
+            let engine = engine::load(&model_path, use_gpu, threads).map(|mut e| {
                 e.set_languages(&langs);
                 e
             });
@@ -364,7 +365,7 @@ pub fn start(app: AppHandle, cfg: PipelineConfig, v11n: Arc<Versification>) -> R
                 last_sentence: None,
                 room,
             };
-            worker.run(&mut engine, job_rx);
+            worker.run(engine.as_mut(), job_rx);
             log::info!("asr thread stopped");
         })?
     };
@@ -603,7 +604,7 @@ impl AsrWorker {
         }
     }
 
-    fn run(&mut self, engine: &mut WhisperEngine, jobs: Receiver<Job>) {
+    fn run(&mut self, engine: &mut dyn SpeechEngine, jobs: Receiver<Job>) {
         while let Ok(first) = jobs.recv() {
             // Coalesce the backlog: every final is kept (in order), but only the newest partial
             // — and only if it belongs to an utterance newer than any final in this batch.
@@ -615,13 +616,17 @@ impl AsrWorker {
                 let keep = job.is_final
                     || (Some(i) == newest_partial && newest_final.map_or(true, |f| job.utterance > f));
                 if keep {
-                    self.process(engine, job);
+                    let utterance = job.utterance;
+                    // A sentence that trips a bug must not end listening mid-service.
+                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.process(engine, job))).is_err() {
+                        log::error!("utterance {utterance} couldn't be processed (the panic is logged above); listening continues");
+                    }
                 }
             }
         }
     }
 
-    fn process(&mut self, engine: &mut WhisperEngine, job: Job) {
+    fn process(&mut self, engine: &mut dyn SpeechEngine, job: Job) {
         let settings = self.app.state::<AppState>().settings.lock().clone();
         // Hand a finished sentence to the accuracy pass first, so both decode in parallel.
         // If it's busy, this sentence keeps the quick text (logged below).
@@ -920,67 +925,197 @@ struct RefineWorker {
 }
 
 impl RefineWorker {
-    fn run(&mut self, engine: &mut WhisperEngine, jobs: Receiver<RefineJob>) {
+    fn run(&mut self, engine: &mut dyn SpeechEngine, jobs: Receiver<RefineJob>) {
         while let Ok(job) = jobs.recv() {
-            let app = self.app.clone();
-            let state = app.state::<AppState>();
-            let settings = state.settings.lock().clone();
-            let planned: Vec<String> = state.plan.lock().refs.iter().map(|r| r.label()).collect();
-            let prompt = whisper::accurate_prompt(&settings.vocabulary, &planned, &self.langs);
-
-            // Fallen behind: let this sentence keep its quick text rather than grow a backlog.
-            let waited = job.captured_at.elapsed();
-            let sung = self.room.sung(heard_from(&job.audio, job.captured_at), job.captured_at);
-            if waited > REFINE_MAX_WAIT {
-                log::info!("accuracy pass behind ({:.1} s); utterance {} keeps the quick text", waited.as_secs_f32(), job.utterance);
-                if let Some(text) = job.quick_text.get() {
-                    state.history.said(text, sung);
-                }
-                continue;
+            let utterance = job.utterance;
+            // As in the live pass: one sentence that trips a bug mustn't end the accuracy pass.
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.refine(engine, job))).is_err() {
+                log::error!("accuracy pass couldn't process utterance {utterance} (the panic is logged above); it continues");
             }
+        }
+    }
 
+    fn refine(&mut self, engine: &mut dyn SpeechEngine, job: RefineJob) {
+        let app = self.app.clone();
+        let state = app.state::<AppState>();
+        let settings = state.settings.lock().clone();
+        let planned: Vec<String> = state.plan.lock().refs.iter().map(|r| r.label()).collect();
+        let prompt = whisper::accurate_prompt(&settings.vocabulary, &planned, &self.langs);
+
+        // Fallen behind: let this sentence keep its quick text rather than grow a backlog.
+        let waited = job.captured_at.elapsed();
+        let sung = self.room.sung(heard_from(&job.audio, job.captured_at), job.captured_at);
+        if waited > REFINE_MAX_WAIT {
+            log::info!("accuracy pass behind ({:.1} s); utterance {} keeps the quick text", waited.as_secs_f32(), job.utterance);
+            if let Some(text) = job.quick_text.get() {
+                state.history.said(text, sung);
+            }
+            return;
+        }
+
+        let t0 = Instant::now();
+        let transcript = match engine.transcribe(&job.audio, self.opts, &prompt) {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("accuracy pass failed: {e:#}");
+                return;
+            }
+        };
+        let inference_ms = t0.elapsed().as_secs_f32() * 1000.0;
+        log::debug!("accuracy pass: {:.0} ms for {:.1} s", inference_ms, job.audio.len() as f32 / SAMPLE_RATE as f32);
+        let _ = app.emit(
+            events::TRANSCRIPT,
+            TranscriptEvent {
+                utterance_id: job.utterance,
+                text: transcript.text.clone(),
+                is_final: true,
+                confidence: transcript.confidence,
+                inference_ms,
+                audio_ms: (job.audio.len() * 1000 / SAMPLE_RATE) as u32,
+                refined: true,
+                sung,
+            },
+        );
+        if transcript.text.is_empty() {
+            return;
+        }
+        state.history.said(&transcript.text, sung);
+        let late = job.captured_at.elapsed();
+        if late > REFINE_MAX_LATE {
+            log::info!("accuracy pass took {:.1} s for utterance {}; its references are too late to queue", late.as_secs_f32(), job.utterance);
+            return;
+        }
+        let asr_factor = 0.7 + 0.3 * transcript.confidence.clamp(0.0, 1.0);
+        let meaning = settings.meaning_detection.then(|| state.meaning.lock().clone()).flatten();
+        let heard = Heard { text: &transcript.text, is_final: true, languages: &self.langs, language: transcript.language, asr_factor };
+        let refs = find_references(&mut self.parser, &self.bible, &self.v11n, heard, settings.quote_detection, meaning.as_deref());
+        let library = state.songs.version();
+        if self.lyrics.version() != library {
+            self.lyrics.refresh(library, state.songs.all());
+        }
+        let singing = sung || (state.presenter.snapshot().slide.as_ref().is_some_and(|s| s.is_song()) && self.lyrics.detect(&transcript.text).is_some());
+        emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, singing, job.utterance, job.captured_at);
+    }
+}
+
+#[cfg(test)]
+mod replay {
+    //! Plays a recording through the listening pipeline offline, as if it were heard live: the
+    //! same speech detector and sentence cutter, the live and accuracy passes with their prompts,
+    //! and the same reference finder. Writes one results file per pass for
+    //! `tools/asr-bench/score_real.py`, with the references the app itself found.
+    //!
+    //! ```text
+    //! HEARKEN_REPLAY=service.wav            16 kHz mono
+    //! HEARKEN_LIVE=…/ggml-base.en-q5_1.bin  live model (optional)
+    //! HEARKEN_ACCURATE=…/ggml-small.en-q5_1.bin   accuracy pass (optional; a Parakeet folder works too)
+    //! HEARKEN_OUT=results/real-service      written as <out>-live.json and <out>-accurate.json
+    //! HEARKEN_LIVE_PROMPT, HEARKEN_ACCURATE_PROMPT   try another prompt (" " for none)
+    //! cargo test --release replay_recording -- --ignored --nocapture
+    //! ```
+    //! Unlike a live service nothing is dropped for being slow: every sentence gets both passes.
+    use std::path::Path;
+
+    use super::*;
+    use crate::asr::hardware::{load_wav, Specs};
+
+    struct Pass {
+        name: String,
+        engine: Box<dyn SpeechEngine>,
+        opts: DecodeOptions,
+        prompt: String,
+        seconds: f64,
+        out: serde_json::Map<String, serde_json::Value>,
+        refs: serde_json::Map<String, serde_json::Value>,
+    }
+
+    impl Pass {
+        fn new(model: &str, opts: DecodeOptions, prompt: String, langs: &[Lang]) -> Self {
+            let threads = Specs::detect().recommended_threads();
+            let mut engine = engine::load(Path::new(model), false, threads).expect("model");
+            engine.set_languages(langs);
+            let path = Path::new(model);
+            let name = if path.is_dir() { path.file_name() } else { path.file_stem() }.unwrap().to_string_lossy().into_owned();
+            Self { name, engine, opts, prompt, seconds: 0.0, out: Default::default(), refs: Default::default() }
+        }
+
+        fn hear(&mut self, key: &str, audio: &[f32], parser: &mut ReferenceParser, bible: &BibleDb, v11n: &Versification, langs: &[Lang]) -> String {
             let t0 = Instant::now();
-            let transcript = match engine.transcribe(&job.audio, self.opts, &prompt) {
-                Ok(t) => t,
-                Err(e) => {
-                    log::warn!("accuracy pass failed: {e:#}");
-                    continue;
-                }
+            let t = self.engine.transcribe(audio, self.opts, &self.prompt).expect("decode");
+            self.seconds += t0.elapsed().as_secs_f64();
+            let heard = Heard { text: &t.text, is_final: true, languages: langs, language: t.language, asr_factor: 0.7 + 0.3 * t.confidence.clamp(0.0, 1.0) };
+            let found: Vec<String> = if t.text.is_empty() {
+                vec![]
+            } else {
+                find_references(parser, bible, v11n, heard, true, None)
+                    .into_iter()
+                    .map(|r| format!("{} ({}, {:.0}%)", r.reference.label(), r.kind.name(), r.confidence * 100.0))
+                    .collect()
             };
-            let inference_ms = t0.elapsed().as_secs_f32() * 1000.0;
-            log::debug!("accuracy pass: {:.0} ms for {:.1} s", inference_ms, job.audio.len() as f32 / SAMPLE_RATE as f32);
-            let _ = app.emit(
-                events::TRANSCRIPT,
-                TranscriptEvent {
-                    utterance_id: job.utterance,
-                    text: transcript.text.clone(),
-                    is_final: true,
-                    confidence: transcript.confidence,
-                    inference_ms,
-                    audio_ms: (job.audio.len() * 1000 / SAMPLE_RATE) as u32,
-                    refined: true,
-                    sung,
-                },
-            );
-            if transcript.text.is_empty() {
+            self.out.insert(key.into(), t.text.clone().into());
+            self.refs.insert(key.into(), found.clone().into());
+            format!("{} {}{}", self.name, t.text, if found.is_empty() { String::new() } else { format!("  → {}", found.join(", ")) })
+        }
+
+        fn save(self, path: String, audio_seconds: f64) {
+            let doc = serde_json::json!({ "model": format!("Hearken: {}", self.name), "seconds": self.seconds, "audio_seconds": audio_seconds, "out": self.out, "refs": self.refs });
+            std::fs::write(&path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+            eprintln!("wrote {path}");
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a recording and models"]
+    fn replay_recording() {
+        let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let wav = env("HEARKEN_REPLAY").expect("HEARKEN_REPLAY");
+        let out = env("HEARKEN_OUT").expect("HEARKEN_OUT");
+        let langs = [Lang::En];
+        let audio = load_wav(Path::new(&wav)).expect("16 kHz mono wav");
+        let name = Path::new(&wav).file_stem().unwrap().to_string_lossy().replace('@', "_");
+        let bible = BibleDb::open(&Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/bible.db")).unwrap();
+        let v11n = bible.versification().unwrap();
+
+        let live_prompt = std::env::var("HEARKEN_LIVE_PROMPT").unwrap_or_else(|_| whisper::live_prompt("", &langs));
+        let accurate_prompt = std::env::var("HEARKEN_ACCURATE_PROMPT").unwrap_or_else(|_| whisper::accurate_prompt("", &[], &langs));
+        let mut live = env("HEARKEN_LIVE").map(|m| Pass::new(&m, DecodeOptions::live(false, true), live_prompt, &langs));
+        let mut accurate = env("HEARKEN_ACCURATE").map(|m| Pass::new(&m, DecodeOptions::accurate(false), accurate_prompt, &langs));
+        // Each pass keeps its own parser, as the live and accuracy threads do ("verse 18" is
+        // read against the reference before it).
+        let mut parsers = (ReferenceParser::for_languages(&langs), ReferenceParser::for_languages(&langs));
+
+        let mut vad = SpeechDetector::new(false);
+        let mut seg = Segmenter::new(SegmenterConfig::default());
+        let (mut sentences, mut spoken) = (0usize, 0f64);
+        let (mut empty_live, mut empty_accurate) = (0usize, 0usize);
+        for (i, frame) in audio.chunks_exact(FRAME_SAMPLES).enumerate() {
+            let Some(SegEvent::End { audio: sentence, .. }) = seg.push(frame, vad.is_speech(frame)) else { continue };
+            if sentence.len() < ms_to_samples(MIN_FINAL_MS) {
                 continue;
             }
-            state.history.said(&transcript.text, sung);
-            let late = job.captured_at.elapsed();
-            if late > REFINE_MAX_LATE {
-                log::info!("accuracy pass took {:.1} s for utterance {}; its references are too late to queue", late.as_secs_f32(), job.utterance);
-                continue;
+            let end = (i + 1) * FRAME_SAMPLES;
+            let start = end.saturating_sub(sentence.len()) / SAMPLE_RATE;
+            let key = format!("{name}@{start}");
+            sentences += 1;
+            spoken += sentence.len() as f64 / SAMPLE_RATE as f64;
+            eprintln!("{}:{:02} ({:.1} s)", start / 60, start % 60, sentence.len() as f32 / SAMPLE_RATE as f32);
+            if let Some(live) = live.as_mut() {
+                let line = live.hear(&key, &sentence, &mut parsers.0, &bible, &v11n, &langs);
+                empty_live += live.out[&key].as_str().unwrap().trim().is_empty() as usize;
+                eprintln!("  {line}");
             }
-            let asr_factor = 0.7 + 0.3 * transcript.confidence.clamp(0.0, 1.0);
-            let meaning = settings.meaning_detection.then(|| state.meaning.lock().clone()).flatten();
-            let heard = Heard { text: &transcript.text, is_final: true, languages: &self.langs, language: transcript.language, asr_factor };
-            let refs = find_references(&mut self.parser, &self.bible, &self.v11n, heard, settings.quote_detection, meaning.as_deref());
-            let library = state.songs.version();
-            if self.lyrics.version() != library {
-                self.lyrics.refresh(library, state.songs.all());
+            if let Some(acc) = accurate.as_mut() {
+                let line = acc.hear(&key, &sentence, &mut parsers.1, &bible, &v11n, &langs);
+                empty_accurate += acc.out[&key].as_str().unwrap().trim().is_empty() as usize;
+                eprintln!("  {line}");
             }
-            let singing = sung || (state.presenter.snapshot().slide.as_ref().is_some_and(|s| s.is_song()) && self.lyrics.detect(&transcript.text).is_some());
-            emit_references(&app, &state, &settings, &self.bible, &self.dedupe, refs, singing, job.utterance, job.captured_at);
+        }
+        eprintln!("{sentences} sentences, {spoken:.0} s of speech; empty: live {empty_live}, accuracy pass {empty_accurate}");
+        if let Some(live) = live {
+            live.save(format!("{out}-live.json"), spoken);
+        }
+        if let Some(acc) = accurate {
+            acc.save(format!("{out}-accurate.json"), spoken);
         }
     }
 }

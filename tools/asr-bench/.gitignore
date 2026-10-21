@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+models/
+clips/
+truth.json
+real/
+results/
+whisper-bench/target/
+whisper-bench/Cargo.lock

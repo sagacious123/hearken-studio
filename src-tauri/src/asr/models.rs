@@ -1,8 +1,8 @@
-//! Whisper model catalogue. `tiny.en` and `base.en` ship in the installer (fast, live updates);
-//! the larger, more accurate models used for the accuracy pass, and the multilingual ones for
-//! preaching in other languages, are downloaded on demand into the app's data folder, so the
-//! installer stays small. Downloads resume after interruption and are checked against the
-//! published SHA-256 before use.
+//! Speech model catalogue. Whisper's `tiny.en` and `base.en` ship in the installer (fast, live
+//! updates); the larger, more accurate models used for the accuracy pass (Whisper Small and
+//! Turbo, and Parakeet), and the multilingual ones for preaching in other languages, are
+//! downloaded on demand into the app's data folder, so the installer stays small. Downloads
+//! resume after interruption and every file is checked against its published SHA-256 before use.
 
 use std::{
     fs,
@@ -19,12 +19,32 @@ use crate::scripture::lang::Lang;
 
 const BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 
-pub struct ModelInfo {
-    pub id: &'static str,
-    pub label: &'static str,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    Whisper,
+    Parakeet,
+}
+
+/// One file of a model kept as a folder of files.
+pub struct Part {
     pub file: &'static str,
     pub bytes: u64,
     pub sha256: &'static str,
+}
+
+pub struct ModelInfo {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub engine: Engine,
+    /// Whisper: the model file. Parakeet: the folder its `parts` go in.
+    pub file: &'static str,
+    /// The whole download.
+    pub bytes: u64,
+    /// Whisper's one file ("" for bundled ones); folders check each part instead.
+    pub sha256: &'static str,
+    pub parts: &'static [Part],
+    /// Where the files are downloaded from.
+    pub source: &'static str,
     /// Shipped in the installer (never downloaded or deleted).
     pub bundled: bool,
     /// Usable for the accuracy pass.
@@ -36,9 +56,12 @@ pub const CATALOG: &[ModelInfo] = &[
     ModelInfo {
         id: "tiny.en",
         label: "Tiny (English)",
+        engine: Engine::Whisper,
         file: "ggml-tiny.en-q5_1.bin",
         bytes: 32_166_155,
         sha256: "",
+        parts: &[],
+        source: BASE_URL,
         bundled: true,
         accuracy: false,
         note: "Fastest; live updates on slow computers.",
@@ -46,9 +69,12 @@ pub const CATALOG: &[ModelInfo] = &[
     ModelInfo {
         id: "base.en",
         label: "Base (English)",
+        engine: Engine::Whisper,
         file: "ggml-base.en-q5_1.bin",
         bytes: 59_721_011,
         sha256: "",
+        parts: &[],
+        source: BASE_URL,
         bundled: true,
         accuracy: false,
         note: "Live updates on most computers.",
@@ -56,9 +82,12 @@ pub const CATALOG: &[ModelInfo] = &[
     ModelInfo {
         id: "tiny",
         label: "Tiny (all languages)",
+        engine: Engine::Whisper,
         file: "ggml-tiny-q5_1.bin",
         bytes: 32_152_673,
         sha256: "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7",
+        parts: &[],
+        source: BASE_URL,
         bundled: false,
         accuracy: false,
         note: "Live updates in other languages on slow computers.",
@@ -66,9 +95,12 @@ pub const CATALOG: &[ModelInfo] = &[
     ModelInfo {
         id: "base",
         label: "Base (all languages)",
+        engine: Engine::Whisper,
         file: "ggml-base-q5_1.bin",
         bytes: 59_707_625,
         sha256: "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+        parts: &[],
+        source: BASE_URL,
         bundled: false,
         accuracy: false,
         note: "Live updates in other languages, such as French and Spanish.",
@@ -76,9 +108,12 @@ pub const CATALOG: &[ModelInfo] = &[
     ModelInfo {
         id: "small.en",
         label: "Small (English)",
+        engine: Engine::Whisper,
         file: "ggml-small.en-q5_1.bin",
         bytes: 190_098_681,
         sha256: "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
+        parts: &[],
+        source: BASE_URL,
         bundled: false,
         accuracy: true,
         note: "Clearly more accurate than Base. Fast enough on any recent computer.",
@@ -86,9 +121,12 @@ pub const CATALOG: &[ModelInfo] = &[
     ModelInfo {
         id: "small",
         label: "Small (all languages)",
+        engine: Engine::Whisper,
         file: "ggml-small-q5_1.bin",
         bytes: 190_085_487,
         sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+        parts: &[],
+        source: BASE_URL,
         bundled: false,
         accuracy: true,
         note: "Small for sermons in other languages. Fast enough on any recent computer.",
@@ -96,12 +134,51 @@ pub const CATALOG: &[ModelInfo] = &[
     ModelInfo {
         id: "large-v3-turbo",
         label: "Large v3 Turbo",
+        engine: Engine::Whisper,
         file: "ggml-large-v3-turbo-q5_0.bin",
         bytes: 574_041_195,
         sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+        parts: &[],
+        source: BASE_URL,
         bundled: false,
         accuracy: true,
         note: "Most accurate, best with accents. Needs Apple Silicon or a graphics card.",
+    },
+    ModelInfo {
+        id: "parakeet.en",
+        label: "Parakeet (English)",
+        engine: Engine::Parakeet,
+        file: "parakeet-tdt-0.6b-v2-int8",
+        bytes: 661_190_513,
+        sha256: "",
+        parts: &[
+            Part { file: "encoder.int8.onnx", bytes: 652_184_296, sha256: "a32b12d17bbbc309d0686fbbcc2987b5e9b8333a7da83fa6b089f0a2acd651ab" },
+            Part { file: "decoder.int8.onnx", bytes: 7_257_753, sha256: "b6bb64963457237b900e496ee9994b59294526439fbcc1fecf705b31a15c6b4e" },
+            Part { file: "joiner.int8.onnx", bytes: 1_739_080, sha256: "7946164367946e7f9f29a122407c3252b680dbae9a51343eb2488d057c3c43d2" },
+            Part { file: "tokens.txt", bytes: 9_384, sha256: "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d" },
+        ],
+        source: "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/main",
+        bundled: false,
+        accuracy: true,
+        note: "As accurate as Turbo on sermons, and fast on any computer: no graphics card needed. By NVIDIA (CC BY 4.0).",
+    },
+    ModelInfo {
+        id: "parakeet",
+        label: "Parakeet (25 languages)",
+        engine: Engine::Parakeet,
+        file: "parakeet-tdt-0.6b-v3-int8",
+        bytes: 670_478_772,
+        sha256: "",
+        parts: &[
+            Part { file: "encoder.int8.onnx", bytes: 652_184_281, sha256: "acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247" },
+            Part { file: "decoder.int8.onnx", bytes: 11_845_275, sha256: "179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e" },
+            Part { file: "joiner.int8.onnx", bytes: 6_355_277, sha256: "3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3" },
+            Part { file: "tokens.txt", bytes: 93_939, sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" },
+        ],
+        source: "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main",
+        bundled: false,
+        accuracy: true,
+        note: "Parakeet for sermons in French, Spanish and other European languages. Fast on any computer. By NVIDIA (CC BY 4.0).",
     },
 ];
 
@@ -128,8 +205,12 @@ pub fn live_choices(benchmarked: &str, langs: &[Lang]) -> Vec<&'static str> {
     std::iter::once(first).chain(others.iter().copied().filter(|m| *m != first)).collect()
 }
 
-/// The file for `id` in any of `dirs` (bundled resources first, then downloads).
+/// The file (or, for Parakeet, the complete folder) for `id` in any of `dirs` (bundled
+/// resources first, then downloads).
 pub fn find(dirs: &[&Path], id: &str) -> Option<PathBuf> {
+    if let Some(m) = info(id).filter(|m| !m.parts.is_empty()) {
+        return dirs.iter().map(|d| d.join(m.file)).find(|p| m.parts.iter().all(|part| p.join(part.file).is_file()));
+    }
     let names: Vec<String> = match info(id) {
         Some(m) => vec![m.file.to_owned()],
         None => vec![format!("ggml-{id}-q5_1.bin"), format!("ggml-{id}.bin")],
@@ -170,23 +251,40 @@ pub fn download(id: &str, dir: &Path, progress: impl Fn(u64, u64), cancel: &Atom
     let Some(m) = info(id).filter(|m| !m.bundled) else { bail!("{id} can't be downloaded") };
     fs::create_dir_all(dir).context("creating the models folder")?;
     let dest = dir.join(m.file);
-    if dest.is_file() {
-        return Ok(dest);
+    if m.parts.is_empty() {
+        fetch(&format!("{}/{}", m.source, m.file), &dest, m.bytes, m.sha256, m.label, |n| progress(n, m.bytes), cancel)?;
+    } else {
+        // A folder: each file in turn, so an interrupted download resumes where it stopped.
+        fs::create_dir_all(&dest).context("creating the model's folder")?;
+        let mut done = 0;
+        for part in m.parts {
+            fetch(&format!("{}/{}", m.source, part.file), &dest.join(part.file), part.bytes, part.sha256, m.label, |n| progress(done + n, m.bytes), cancel)?;
+            done += part.bytes;
+        }
     }
-    let part = dir.join(format!("{}.part", m.file));
+    progress(m.bytes, m.bytes);
+    Ok(dest)
+}
+
+/// One file from `url` to `dest`, through `dest.part` (resumed if it's there), checked against
+/// `sha256` before it takes its place.
+fn fetch(url: &str, dest: &Path, bytes: u64, sha256: &str, label: &str, progress: impl Fn(u64), cancel: &AtomicBool) -> Result<()> {
+    if dest.is_file() {
+        return Ok(());
+    }
+    let part = dest.with_file_name(format!("{}.part", dest.file_name().unwrap_or_default().to_string_lossy()));
     let mut have = fs::metadata(&part).map(|md| md.len()).unwrap_or(0);
-    if have > m.bytes {
+    if have > bytes {
         fs::remove_file(&part).ok();
         have = 0;
     }
 
-    if have < m.bytes {
-        let url = format!("{BASE_URL}/{}", m.file);
-        let mut req = ureq::get(&url).set("User-Agent", "HearkenStudio");
+    if have < bytes {
+        let mut req = ureq::get(url).set("User-Agent", "HearkenStudio");
         if have > 0 {
             req = req.set("Range", &format!("bytes={have}-"));
         }
-        let resp = req.call().with_context(|| format!("downloading {}", m.label))?;
+        let resp = req.call().with_context(|| format!("downloading {label}"))?;
         if have > 0 && resp.status() != 206 {
             have = 0; // server ignored the range: start over
         }
@@ -204,29 +302,35 @@ pub fn download(id: &str, dir: &Path, progress: impl Fn(u64, u64), cancel: &Atom
             }
             out.write_all(&buf[..n])?;
             have += n as u64;
-            if have - last_report >= 1 << 20 || have == m.bytes {
+            if have - last_report >= 1 << 20 || have == bytes {
                 last_report = have;
-                progress(have, m.bytes);
+                progress(have);
             }
         }
         out.flush()?;
     }
 
-    if have != m.bytes {
-        bail!("download incomplete ({have} of {} bytes); try again to resume", m.bytes);
+    if have != bytes {
+        bail!("download incomplete ({have} of {bytes} bytes); try again to resume");
     }
-    if sha256_file(&part)? != m.sha256 {
+    if sha256_file(&part)? != sha256 {
         fs::remove_file(&part).ok();
         bail!("the downloaded file didn't match its checksum and was removed; please try again");
     }
-    fs::rename(&part, &dest)?;
-    progress(m.bytes, m.bytes);
-    Ok(dest)
+    fs::rename(&part, dest)?;
+    Ok(())
 }
 
 /// Remove a downloaded model (bundled ones are never touched).
 pub fn delete(id: &str, dir: &Path) -> Result<()> {
     let Some(m) = info(id).filter(|m| !m.bundled) else { bail!("{id} is built in") };
+    if !m.parts.is_empty() {
+        let folder = dir.join(m.file);
+        if folder.exists() {
+            fs::remove_dir_all(&folder).with_context(|| format!("removing {}", folder.display()))?;
+        }
+        return Ok(());
+    }
     for f in [dir.join(m.file), dir.join(format!("{}.part", m.file))] {
         if f.exists() {
             fs::remove_file(&f).with_context(|| format!("removing {}", f.display()))?;
@@ -271,6 +375,17 @@ mod tests {
         assert!(delete("tiny.en", &downloads).is_err());
         delete("large-v3-turbo", &downloads).unwrap();
         assert!(find(&dirs, "large-v3-turbo").is_none());
+        // Parakeet is a folder, found only when every file is in it, and removed whole.
+        let folder = downloads.join("parakeet-tdt-0.6b-v2-int8");
+        fs::create_dir_all(&folder).unwrap();
+        for p in &info("parakeet.en").unwrap().parts[1..] {
+            fs::write(folder.join(p.file), b"x").unwrap();
+        }
+        assert!(find(&dirs, "parakeet.en").is_none());
+        fs::write(folder.join("encoder.int8.onnx"), b"x").unwrap();
+        assert_eq!(find(&dirs, "parakeet.en"), Some(folder.clone()));
+        delete("parakeet.en", &downloads).unwrap();
+        assert!(!folder.exists());
         fs::remove_dir_all(&root).ok();
     }
 
@@ -284,7 +399,12 @@ mod tests {
         assert_eq!(for_languages("large-v3-turbo", &fr), "large-v3-turbo");
         assert_eq!(live_choices("tiny.en", &fr), ["tiny", "base"]);
         assert_eq!(live_choices("base.en", &en), ["base.en", "tiny.en"]);
-        assert!(CATALOG.iter().filter(|m| !m.bundled).all(|m| m.sha256.len() == 64), "downloads are checked");
+        let checked = |m: &ModelInfo| if m.parts.is_empty() { m.sha256.len() == 64 } else { m.parts.iter().all(|p| p.sha256.len() == 64) };
+        assert!(CATALOG.iter().filter(|m| !m.bundled).all(checked), "downloads are checked");
+        let whole = |m: &ModelInfo| m.parts.is_empty() || m.parts.iter().map(|p| p.bytes).sum::<u64>() == m.bytes;
+        assert!(CATALOG.iter().all(whole), "a folder's size is its files'");
+        assert_eq!(for_languages("parakeet.en", &fr), "parakeet");
+        assert_eq!(for_languages("parakeet.en", &en), "parakeet.en");
     }
 
     #[test]

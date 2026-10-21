@@ -49,6 +49,9 @@ flate2 = "1"
 
 # Telling singing from speech: Google's YAMNet sound classifier, run in pure Rust (no native runtime)
 tract-onnx = "0.23"
+# Parakeet for the accuracy pass (asr/parakeet.rs). Links sherpa-onnx and ONNX Runtime statically,
+# downloaded prebuilt for each platform at build time.
+sherpa-onnx = "1.13.8"
 
 # Style editor: the fonts installed on this computer
 fontdb = "0.24"

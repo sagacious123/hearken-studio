@@ -10,7 +10,7 @@ use std::{
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use super::whisper::{DecodeOptions, WhisperEngine};
+use super::{engine::SpeechEngine, whisper::DecodeOptions};
 use crate::{
     audio::SAMPLE_RATE,
     state::{read_json, write_json},
@@ -90,7 +90,7 @@ impl AccuracyProfile {
     }
 }
 
-fn time(engine: &mut WhisperEngine, audio: &[f32], opts: DecodeOptions, prompt: &str) -> Result<f32> {
+fn time(engine: &mut dyn SpeechEngine, audio: &[f32], opts: DecodeOptions, prompt: &str) -> Result<f32> {
     let t = Instant::now();
     engine.transcribe(audio, opts, prompt)?;
     Ok(Duration::as_secs_f32(&t.elapsed()) * 1000.0)
@@ -98,7 +98,7 @@ fn time(engine: &mut WhisperEngine, audio: &[f32], opts: DecodeOptions, prompt: 
 
 /// Time `engine` on `audio` (a full sentence) and pick the best setting within budget.
 /// Cheapest first: if even that can't keep up, nothing else is tried.
-pub fn calibrate(engine: &mut WhisperEngine, model: &str, audio: &[f32], prompt: &str) -> Result<Calibration> {
+pub fn calibrate(engine: &mut dyn SpeechEngine, model: &str, audio: &[f32], prompt: &str) -> Result<Calibration> {
     let audio_ms = audio.len() as f32 * 1000.0 / SAMPLE_RATE as f32;
     let backend = engine.backend().to_owned();
     let (budget, contention) = if backend == "cpu" { (audio_ms * RTF_BUDGET_CPU, CPU_CONTENTION) } else { (audio_ms * RTF_BUDGET_GPU, 1.0) };
@@ -109,8 +109,8 @@ pub fn calibrate(engine: &mut WhisperEngine, model: &str, audio: &[f32], prompt:
     }
     let base_ms = time(engine, audio, cheapest, prompt)?;
     let result = |usable, beam, full_ctx, decode_ms| Calibration { model: model.to_owned(), backend: backend.clone(), usable, beam, full_ctx, decode_ms, audio_ms };
-    if !fits(base_ms) {
-        return Ok(result(false, false, false, base_ms));
+    if !fits(base_ms) || !engine.tunable() {
+        return Ok(result(fits(base_ms), false, false, base_ms));
     }
     // Full context costs roughly 3x on CPU and beam search ~1.5x; skip tries that can't fit.
     for (beam, full_ctx, est) in [(true, true, 3.0), (true, false, 1.3)] {

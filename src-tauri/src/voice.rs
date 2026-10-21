@@ -65,11 +65,12 @@ fn normalize(text: &str) -> String {
             "previews" | "previos" => "previous".to_owned(),
             w => match ORDINALS.iter().find(|(o, _)| *o == w) {
                 Some((_, n)) => format!("{n}th"),
-                // "10th", "21st", "2nd", "3rd"
-                None if w.len() > 2 && w[..w.len() - 2].chars().all(|c| c.is_ascii_digit()) && ["th", "st", "nd", "rd"].contains(&&w[w.len() - 2..]) => {
-                    format!("{}th", &w[..w.len() - 2])
-                }
-                None => w.to_owned(),
+                // "10th", "21st", "2nd", "3rd". By suffix, not byte position: a word can be any
+                // script ("約" is three bytes), and slicing inside a character panics.
+                None => match ["th", "st", "nd", "rd"].iter().find_map(|s| w.strip_suffix(s)) {
+                    Some(n) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => format!("{n}th"),
+                    _ => w.to_owned(),
+                },
             },
         })
         .collect();
@@ -333,6 +334,17 @@ mod tests {
         ] {
             assert_eq!(parse(said), Some(want), "{said}");
         }
+    }
+
+    /// A multilingual model sometimes writes other scripts on noise ("約", "ありがとう"); a
+    /// sentence like that once crashed listening.
+    #[test]
+    fn any_script_is_read_safely() {
+        for said in ["約", "約束", "ありがとう。", "Спасибо", "约th 約st", "مرحبا", "🙏🙏", "Ẹ ṣé"] {
+            assert_eq!(parse(said), None, "{said}");
+            assert_eq!(parse_in(said, &[Lang::En, Lang::Fr]), None, "{said}");
+        }
+        assert_eq!(normalize("the 10th and 21st 約th"), "the 10th and 21th 約th");
     }
 
     #[test]
